@@ -6,7 +6,23 @@
  * from first (0) to last (1) and blended between them.
  */
 import type { ItemId } from '@raceoff/shared';
-import { lerp, type Rng } from './math';
+import { clamp, lerp, type Rng } from './math';
+
+/** How far behind the leader, as a share of a lap, counts as hopelessly behind for the item draw. */
+const GAP_FOR_LAST = 0.3;
+
+/**
+ * Where a kart stands for the item draw, from 0 (leading) to 1 (far behind). Mostly the gap to the leader,
+ * as in Mario Kart 8, a little the place: last in a tight pack is not far behind, and hanging back to farm
+ * the big items costs more than they give.
+ */
+export function itemRank(place: number, racers: number, gap: number, lapLength: number): number {
+  if (racers <= 1) return 0.5;
+  if (place === 1) return 0;
+  const byPlace = (place - 1) / (racers - 1);
+  const byGap = clamp(gap / (lapLength * GAP_FOR_LAST), 0, 1);
+  return clamp(0.3 * byPlace + 0.7 * byGap, 0, 1);
+}
 
 type Weights = [first: number, upper: number, lower: number, last: number];
 
@@ -27,11 +43,11 @@ const TABLE: Record<ItemId, Weights> = {
 export type ItemMode = 'normal' | 'frantic' | 'off';
 
 /**
- * Draw an item for a kart in `place` (1-based) of `racers`.
+ * Draw an item for a kart at `rank` (0 leading to 1 far behind; see `itemRank`).
  * `planeInPlay` keeps more than one Paper Jet from being in the air at once.
  */
-export function drawItem(place: number, racers: number, mode: ItemMode, rand: Rng, planeInPlay: boolean): ItemId {
-  let r = racers > 1 ? (place - 1) / (racers - 1) : 0.5;
+export function drawItem(rank: number, mode: ItemMode, rand: Rng, planeInPlay: boolean): ItemId {
+  let r = clamp(rank, 0, 1);
   // Frantic hands everyone the back-of-the-pack table.
   if (mode === 'frantic') r = 0.45 + r * 0.55;
   const seg = Math.min(2, Math.floor(r * 3));

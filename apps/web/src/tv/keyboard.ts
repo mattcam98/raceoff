@@ -62,6 +62,6 @@ export class KeyboardPads {
     for (const k of s.item) this.pressed.delete(k);
     const steer = (held(s.right) ? 1 : 0) - (held(s.left) ? 1 : 0);
     const brake = held(s.brake);
-    return { steer, gas: held(s.gas), brake, drift: held(s.drift), back: brake, item };
+    return { steer, gas: held(s.gas), brake, drift: held(s.drift), back: brake, item, digital: true };
   }
 }

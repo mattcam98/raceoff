@@ -196,6 +196,13 @@ export class Fx {
     });
   }
 
+  /** A wisp of air streaming back past a kart: the slipstream, building. */
+  streak(x: number, y: number, z: number, vx: number, vz: number) {
+    this.glow.spawn({
+      x, y, z, vx, vy: 0, vz, color: '#e6f6ff', size: 0.3 + Math.random() * 0.18, life: 0.22 + Math.random() * 0.1, alpha: 0.85, drag: 1, grow: 1.5,
+    });
+  }
+
   dust(x: number, y: number, z: number, color = '#cbbfa8', size = 1.2) {
     this.soft.spawn({
       x: x + (Math.random() - 0.5), y: y + 0.3, z: z + (Math.random() - 0.5),

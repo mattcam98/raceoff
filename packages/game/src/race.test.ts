@@ -1,8 +1,8 @@
 import { BODIES, CHARACTERS, TRACKS } from '@raceoff/shared';
 import { describe, expect, it } from 'vitest';
-import { drawItem } from './items';
-import { Kart, KART_RADIUS, NO_INPUT, STEP, stepKart } from './kart';
-import { rightX, rightZ, rng } from './math';
+import { drawItem, itemRank } from './items';
+import { collideStatic, DRIFT_LEVELS, Kart, KART_RADIUS, NO_INPUT, STEP, stepKart, type KartInput } from './kart';
+import { rightX, rightZ, rng, wrapAngle } from './math';
 import { Race, type RacerSpec } from './race';
 import { colliderDistance, type Collider } from './track/build';
 import { SURF } from './track/types';
@@ -124,25 +124,34 @@ describe('items', () => {
   it('never hands the leader the catch-up items', () => {
     const r = rng(5);
     for (let i = 0; i < 2000; i++) {
-      const item = drawItem(1, 8, 'normal', r, false);
+      const item = drawItem(itemRank(1, 8, 0, 800), 'normal', r, false);
       expect(['plane', 'rocket', 'sugar', 'nitro3', 'seeker', 'bomb']).not.toContain(item);
     }
   });
 
-  it('gives last place the big items and no oil', () => {
+  it('gives a kart far behind the big items and no oil', () => {
     const r = rng(6);
     const got = new Set<string>();
     for (let i = 0; i < 2000; i++) {
-      const item = drawItem(8, 8, 'normal', r, false);
+      const item = drawItem(itemRank(8, 8, 400, 800), 'normal', r, false);
       got.add(item);
       expect(item).not.toBe('oil');
     }
     for (const big of ['rocket', 'sugar', 'plane', 'nitro3']) expect(got.has(big)).toBe(true);
   });
 
+  it('ranks by the gap to the leader more than by place', () => {
+    // Last, but in a tight pack: not treated as far behind.
+    expect(itemRank(8, 8, 10, 800)).toBeLessThan(0.4);
+    // Second, but a long way back: treated as well behind.
+    expect(itemRank(2, 8, 200, 800)).toBeGreaterThan(0.55);
+    expect(itemRank(1, 8, 0, 800)).toBe(0);
+    expect(itemRank(8, 8, 1000, 800)).toBe(1);
+  });
+
   it('allows only one paper jet in the air', () => {
     const r = rng(7);
-    for (let i = 0; i < 2000; i++) expect(drawItem(8, 8, 'frantic', r, true)).not.toBe('plane');
+    for (let i = 0; i < 2000; i++) expect(drawItem(1, 'frantic', r, true)).not.toBe('plane');
   });
 });
 
@@ -192,7 +201,8 @@ describe('falls', () => {
       return d > L / 2 ? d - L : d;
     };
     let falls = 0;
-    for (const seed of [2, 3]) {
+    // Falls are rare by design, so race seeds until a few have happened rather than counting on particular ones.
+    for (let seed = 2; seed < 14 && falls < 3; seed++) {
       const track = getTrack('bath');
       const race = new Race({ track, racers: cpus(), laps: 3, cc: 150, items: 'normal', difficulty: 'hard', seed });
       while (!race.over && race.time < 400) {
@@ -247,17 +257,216 @@ describe('drifting', () => {
     }
   });
 
-  it('turns progressively: steering out widens the arc, into it tightens it, never far past full lock', () => {
+  it('turns progressively: steering out widens the arc, into it tightens it well past full lock', () => {
     const out = drift(-1);
     const hands = drift(0);
     const into = drift(1);
     expect(out.rate).toBeLessThan(hands.rate);
     expect(hands.rate).toBeLessThan(into.rate);
-    // Full lock at this speed turns about 95 degrees a second.
-    expect(into.rate).toBeLessThan(125);
+    // Full lock at this speed turns about 95 degrees a second. Hands off a drift turns about as hard; into it,
+    // a good deal harder, which is what a drift is for; out of it, it opens up.
+    expect(hands.rate).toBeGreaterThan(80);
+    expect(into.rate).toBeGreaterThan(115);
+    expect(into.rate).toBeLessThan(160);
     expect(out.rate).toBeGreaterThan(30);
+    expect(out.rate).toBeLessThan(70);
     // The body swings into the corner, more when tightening.
     expect(into.yaw).toBeGreaterThan(hands.yaw);
     expect(hands.yaw).toBeGreaterThan(0.1);
+  });
+
+  /** Up to speed on the flat, then drive with `input(i)` for `n` steps. */
+  function drive(n: number, input: (i: number, k: Kart) => KartInput) {
+    const k = new Kart(0, 'p', CHARACTERS[0].id, BODIES[0].id, false, 1);
+    k.place3(0, 0, 0, 0);
+    for (let i = 0; i < 300; i++) ((k.input = { ...NO_INPUT, gas: true }), stepKart(k, flat, STEP, events, null));
+    for (let i = 0; i < n; i++) ((k.input = input(i, k)), stepKart(k, flat, STEP, events, null));
+    return k;
+  }
+
+  it('charges at full rate for any real lean into the bend, not only full lock', () => {
+    const soft = drive(60, (i) => ({ ...NO_INPUT, gas: true, drift: true, steer: i < 9 ? 1 : 0.4 }));
+    const hard = drive(60, (i) => ({ ...NO_INPUT, gas: true, drift: true, steer: 1 }));
+    const out = drive(60, (i) => ({ ...NO_INPUT, gas: true, drift: true, steer: i < 9 ? 1 : -1 }));
+    expect(Math.abs(soft.driftCharge - hard.driftCharge)).toBeLessThan(0.05);
+    expect(out.driftCharge).toBeLessThan(hard.driftCharge * 0.6);
+  });
+
+  it('drifts on its own with the assist: a held hard turn slides, easing off cashes it in', () => {
+    const k = drive(30, () => ({ ...NO_INPUT, gas: true, steer: 1, autoDrift: true }));
+    expect(k.driftDir).toBe(1);
+    expect(k.autoDrifting).toBe(true);
+    // Held long, it stops at orange: purple is for drifting by hand.
+    for (let i = 0; i < 400; i++) ((k.input = { ...NO_INPUT, gas: true, steer: 1, autoDrift: true }), stepKart(k, flat, STEP, events, null));
+    expect(k.driftLevel).toBe(2);
+    expect(k.driftCharge).toBeLessThan(DRIFT_LEVELS[2]);
+    k.input = { ...NO_INPUT, gas: true, steer: 0, autoDrift: true };
+    for (let i = 0; i < 10; i++) stepKart(k, flat, STEP, events, null);
+    expect(k.driftDir).toBe(0);
+    expect(k.boost).toBeGreaterThan(0);
+  });
+
+  it('kicks on release: part of the boost arrives at once', () => {
+    const k = drive(80, () => ({ ...NO_INPUT, gas: true, drift: true, steer: 1 }));
+    expect(k.driftLevel).toBeGreaterThanOrEqual(1);
+    const before = k.planarSpeed;
+    k.input = { ...NO_INPUT, gas: true };
+    stepKart(k, flat, STEP, events, null);
+    expect(k.boost).toBeGreaterThan(0);
+    expect(k.planarSpeed).toBeGreaterThan(before * 1.1);
+  });
+
+  it('never drifts on its own without the assist', () => {
+    const k = drive(120, () => ({ ...NO_INPUT, gas: true, steer: 1 }));
+    expect(k.driftDir).toBe(0);
+  });
+});
+
+describe('assists and catch-up', () => {
+  const human = (): RacerSpec[] => [{ id: 'p', name: 'P', character: CHARACTERS[0].id, body: BODIES[0].id, cpu: false, slot: 0 }];
+
+  it('smart steering keeps a kart that is steered off the road on it', () => {
+    const track = getTrack('sandbox');
+    let plain = 0;
+    let smart = 0;
+    for (const assist of [false, true]) {
+      for (let s0 = 20; s0 < track.length; s0 += track.length / 12) {
+        for (const steer of [1, -1]) {
+          const race = new Race({ track, racers: human(), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed: 1 });
+          while (race.time < 0) race.step([NO_INPUT]);
+          const k = race.karts[0];
+          const p = track.pointAt(s0, 0);
+          k.place3(p.x, p.y, p.z, p.h);
+          k.s = k.dist = p.s;
+          k.vx = Math.sin(p.h) * 28;
+          k.vz = Math.cos(p.h) * 28;
+          for (let i = 0; i < 90; i++) {
+            race.step([{ ...NO_INPUT, gas: true, steer, smart: assist }]);
+            if (k.surface === SURF.rough || k.surface === SURF.void || k.surface === SURF.water) assist ? smart++ : plain++;
+          }
+        }
+      }
+    }
+    expect(plain).toBeGreaterThan(300);
+    expect(smart).toBeLessThan(plain * 0.25);
+  });
+
+  it('a kart tucked in behind another gets a slipstream boost', () => {
+    const track = getTrack('breakfast');
+    const two = [...human(), { ...human()[0], id: 'q', slot: 1 }];
+    const race = new Race({ track, racers: two, laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed: 1 });
+    while (race.time < 0) race.step([NO_INPUT, NO_INPUT]);
+    const [front, back] = race.karts;
+    // Hold them nose to tail down the start straight, at the same speed.
+    let drafted = false;
+    for (let i = 0; i < 150 && !drafted; i++) {
+      const s = 30 + i * 0.45;
+      for (const [k, off] of [[front, 6], [back, 0]] as const) {
+        const p = track.pointAt(s + off, 0);
+        k.place3(p.x, p.y, p.z, p.h);
+        k.s = k.dist = p.s;
+        k.vx = Math.sin(p.h) * 27;
+        k.vz = Math.cos(p.h) * 27;
+      }
+      race.step([{ ...NO_INPUT, gas: true }, { ...NO_INPUT, gas: true }]);
+      drafted = race.events.some((e) => e.t === 'boost' && e.kind === 'draft' && e.k === back.index);
+      race.events.length = 0;
+    }
+    expect(drafted).toBe(true);
+    expect(front.boost).toBe(0);
+  });
+
+  it('grades the rocket start: a press nearer GO boosts for longer, too early stalls', () => {
+    const boostFor = (pressAt: number) => {
+      const race = new Race({ track: getTrack('breakfast'), racers: human(), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed: 1 });
+      while (race.time < 0) race.step([{ ...NO_INPUT, drift: race.time + STEP >= pressAt }]);
+      return race.karts[0].boost;
+    };
+    expect(boostFor(-0.08)).toBeGreaterThan(boostFor(-0.35) + 0.4);
+    expect(boostFor(-0.35)).toBeGreaterThan(0);
+    expect(boostFor(-1.0)).toBe(0);
+  });
+});
+
+describe('bumps', () => {
+  const two = (): RacerSpec[] =>
+    [0, 1].map((slot) => ({ id: `p${slot}`, name: 'P', character: CHARACTERS[2].id, body: BODIES[0].id, cpu: false, slot }));
+
+  /** Two karts on the start straight, `gap` apart side by side, driving at `speed`; b angled `toward` a. */
+  function pair(gap: number, speed: number, toward: number) {
+    const track = getTrack('breakfast');
+    const race = new Race({ track, racers: two(), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed: 1 });
+    while (race.time < 0) race.step([NO_INPUT, NO_INPUT]);
+    const [a, b] = race.karts;
+    const p = track.pointAt(40, 0);
+    const rx = rightX(p.h);
+    const rz = rightZ(p.h);
+    a.place3(p.x - rx * gap * 0.5, p.y, p.z - rz * gap * 0.5, p.h);
+    b.place3(p.x + rx * gap * 0.5, p.y, p.z + rz * gap * 0.5, p.h + toward);
+    for (const k of [a, b]) {
+      k.s = k.dist = p.s;
+      k.vx = Math.sin(k.h) * speed;
+      k.vz = Math.cos(k.h) * speed;
+    }
+    return { race, a, b };
+  }
+
+  it('karts side by side only rub: no bump every frame', () => {
+    const { race } = pair(KART_RADIUS * 1.85, 25, 0);
+    let bumps = 0;
+    for (let i = 0; i < 60; i++) {
+      race.step([{ ...NO_INPUT, gas: true }, { ...NO_INPUT, gas: true }]);
+      bumps += race.events.filter((e) => e.t === 'bump').length;
+      race.events.length = 0;
+    }
+    expect(bumps).toBe(0);
+  });
+
+  it('a real bump shoves apart, costs a little speed and turns a glancing hit away', () => {
+    // b swerves into a from its right at speed.
+    const { race, a, b } = pair(KART_RADIUS * 2.2, 25, 0.5);
+    const h0 = a.h;
+    let bumped = false;
+    for (let i = 0; i < 20 && !bumped; i++) {
+      race.step([{ ...NO_INPUT, gas: true }, { ...NO_INPUT, gas: true }]);
+      bumped = race.events.some((e) => e.t === 'bump');
+      race.events.length = 0;
+    }
+    expect(bumped).toBe(true);
+    expect(a.bumpCool).toBeGreaterThan(0);
+    // b came in on a's right, so a's nose turned left (its heading went up), away from b.
+    expect(wrapAngle(a.h - h0)).toBeGreaterThan(0.02);
+    expect(a.stun).toBe(null);
+    // Pushed apart: a now moves away from b.
+    const away = (a.vx * (a.x - b.x) + a.vz * (a.z - b.z)) / Math.hypot(a.x - b.x, a.z - b.z);
+    expect(away).toBeGreaterThan(0);
+  });
+});
+
+describe('walls', () => {
+  const wallTrack = (collider: Collider) =>
+    ({
+      grid: { surfaceAt: () => SURF.road, heightAt: () => 0 },
+      voidY: -50,
+      def: { floorY: 0 },
+      query: (_x: number, _z: number, _r: number, out: Collider[]) => ((out.length = 1), (out[0] = collider), out),
+    }) as unknown as Parameters<typeof stepKart>[1];
+  const events = { wall() {}, boost() {}, land() {}, drift() {}, fall() {} };
+
+  /** A kart at 30 heading `angle` radians into a wall along the z axis at x = 0. */
+  function hit(angle: number) {
+    const track = wallTrack({ t: 'seg', ax: 0, az: -100, bx: 0, bz: 100, r: 0 });
+    const k = new Kart(0, 'p', CHARACTERS[0].id, BODIES[0].id, false, 1);
+    k.place3(-KART_RADIUS + 0.2, 0, 0, angle);
+    k.vx = Math.sin(angle) * 30;
+    k.vz = Math.cos(angle) * 30;
+    collideStatic(k, track, events);
+    return k.planarSpeed / 30;
+  }
+
+  it('a graze keeps nearly all the speed; only a square hit stops the kart', () => {
+    expect(hit(0.15)).toBeGreaterThan(0.93);
+    expect(hit(Math.PI / 4)).toBeGreaterThan(0.6);
+    expect(hit(Math.PI / 2)).toBeLessThan(0.4);
   });
 });

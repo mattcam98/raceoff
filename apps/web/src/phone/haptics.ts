@@ -14,6 +14,10 @@ const PATTERNS: Record<HapticKind, number | number[]> = {
   finish: [80, 60, 80, 60, 160],
   go: 120,
   tick: 12,
+  // Drift sparks: count the pulses for the colour, so a thumb knows when to let go without looking.
+  spark1: 22,
+  spark2: [22, 50, 22],
+  spark3: [22, 50, 22, 50, 22],
 };
 
 let enabled = prefs.get('haptics', true);

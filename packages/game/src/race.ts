@@ -9,11 +9,11 @@ import type { ItemId } from '@raceoff/shared';
 import { AiDriver, type Difficulty } from './ai';
 import { hazardAt, type HazardState } from './hazards';
 import {
-  BALL_RADIUS, BLAST_RADIUS, drawItem, OIL_RADIUS, ORBIT_RADIUS, usesOf,
+  BALL_RADIUS, BLAST_RADIUS, drawItem, itemRank, OIL_RADIUS, ORBIT_RADIUS, usesOf,
   type Blast, type Drop, type ItemMode, type Projectile,
 } from './items';
-import { collideStatic, GRAVITY, Kart, KART_RADIUS, NO_INPUT, STEP, stepKart, type KartInput, type StepEvents, type StunKind } from './kart';
-import { clamp, fwdX, fwdZ, headingOf, lerp, rng, wrapAngle, type Rng } from './math';
+import { BOOST_KICK, collideStatic, GRAVITY, Kart, KART_RADIUS, NO_INPUT, STEP, stepKart, type KartInput, type StepEvents, type StunKind } from './kart';
+import { clamp, fwdX, fwdZ, headingOf, lerp, rightX, rightZ, rng, wrapAngle, type Rng } from './math';
 import type { Collider, Track } from './track/build';
 import { SURF } from './track/types';
 
@@ -50,7 +50,7 @@ export type RaceEvent =
   | { t: 'hit'; k: number; by: number; how: HitHow }
   | { t: 'shield'; k: number }
   | { t: 'blast'; x: number; y: number; z: number }
-  | { t: 'boost'; k: number; kind: 'drift' | 'pad' | 'trick' | 'start' | 'nitro'; level: number }
+  | { t: 'boost'; k: number; kind: 'drift' | 'pad' | 'trick' | 'start' | 'nitro' | 'draft'; level: number }
   | { t: 'drift'; k: number; on: boolean }
   | { t: 'wall'; k: number; strength: number }
   | { t: 'bump'; a: number; b: number; strength: number }
@@ -62,6 +62,15 @@ export type RaceEvent =
   | { t: 'pop'; x: number; y: number; z: number };
 
 export const CC_SCALE = { 50: 0.8, 100: 1, 150: 1.17 } as const;
+
+/**
+ * How hard a kart is to shove. A moving kart is heavier than a parked one and a boosting kart heavier still,
+ * as in Mario Kart, so a well-timed boost barges through; Sugar Rush and the rocket flatten everything.
+ */
+function heft(k: Kart) {
+  const moving = 0.6 + 0.4 * clamp(k.planarSpeed / k.params.maxSpeed, 0, 1.3);
+  return k.params.mass * moving * (k.star > 0 || k.rocket > 0 ? 6 : k.boost > 0 ? 2 : 1);
+}
 export const COUNTDOWN = 3;
 const BOX_RESPAWN = 1.6;
 const ROLL_TIME = 1.3;
@@ -70,6 +79,23 @@ const RESPAWN_TIME = 1.9;
 const FINISH_GRACE = 45;
 /** After everyone who matters has finished, keep the race going this long before calling it. */
 const END_DELAY = 3.5;
+/** A start press this long before GO earns a rocket start; earlier stalls. */
+const START_WINDOW = 0.45;
+/** A press from a phone this long after GO still counts, for the time it takes to reach the TV. */
+const START_LATE = 0.15;
+/**
+ * Kart-to-kart bumps. Closing in slower than `minClosing` only rubs. A bump shoves each kart `push` apart (for
+ * equal weights; a lighter kart up to twice that, a heavier one less), returns `elastic` of the closing speed,
+ * keeps `keep` of the speed, and turns a glancing hit's noses away by up to `yaw` radians. After a bump a kart
+ * cannot be bumped again for `cooldown` seconds.
+ */
+const BUMP = { minClosing: 1.2, push: 3.5, elastic: 0.45, keep: 0.94, yaw: 0.09, cooldown: 0.35, rub: 0.8 };
+
+/**
+ * Slipstream: tucked in this close behind a kart (metres ahead, metres to the side, radians off its heading),
+ * for this long, gives a boost of this length and strength; then a wait before the next.
+ */
+const DRAFT = { near: 2.5, far: 10, side: 1.4, align: 0.3, time: 1.6, boost: 1.2, mul: 1.15, cooldown: 4 };
 
 export interface ItemBox {
   x: number;
@@ -193,6 +219,12 @@ export class Race {
         this.respawnStep(k, dt);
         continue;
       }
+      // A phone's start press can arrive a moment after GO: it still counts, as a slightly late one.
+      if (this.time < START_LATE && !k.cpu && Number.isNaN(this.startPress[k.index]) && k.input.drift && !k.lastDrift) {
+        this.startPress[k.index] = this.time;
+        this.startBoost(k, this.time);
+      }
+      if (k.input.smart && !k.cpu) this.smartSteer(k);
       const auto = k.rocket > 0 ? this.autopilotHeading(k) : null;
       stepKart(k, this.track, dt, this.ev, auto);
       if (k.respawnT > 0) continue;
@@ -206,6 +238,7 @@ export class Race {
     }
 
     this.collideKarts();
+    this.draftStep(dt);
     this.boxesStep(dt);
     this.projectilesStep(dt);
     this.dropsStep(dt);
@@ -239,10 +272,8 @@ export class Race {
       const ai = this.ai[k.index];
       if (ai) at = ai.startTiming();
       if (Number.isNaN(at)) continue;
-      if (at >= -0.45) {
-        k.giveBoost(1.1, 1.45);
-        this.events.push({ t: 'start', k: k.index, good: true });
-        this.events.push({ t: 'boost', k: k.index, kind: 'start', level: 2 });
+      if (at >= -START_WINDOW) {
+        this.startBoost(k, at);
       } else {
         this.stall[k.index] = 0.7;
         this.events.push({ t: 'start', k: k.index, good: false });
@@ -251,9 +282,15 @@ export class Race {
     for (const k of this.karts) k.lapStartT = 0;
   }
 
-  /** A start-boost press can land just after GO too. */
-  pressedAtGo(k: Kart) {
-    return !Number.isNaN(this.startPress[k.index]);
+  /**
+   * A rocket start, graded by timing like Mario Kart's: a press right on GO gives the longest boost, one early
+   * in the window or a moment late a shorter one.
+   */
+  private startBoost(k: Kart, at: number) {
+    const q = at <= 0 ? clamp((at + START_WINDOW) / (START_WINDOW - 0.05), 0, 1) : 1 - (at / START_LATE) * 0.5;
+    k.giveBoost(lerp(0.6, 1.5, q), 1.45);
+    this.events.push({ t: 'start', k: k.index, good: true });
+    this.events.push({ t: 'boost', k: k.index, kind: 'start', level: q > 0.8 ? 3 : q > 0.4 ? 2 : 1 });
   }
 
   // ---------------------------------------------------------------- progress
@@ -404,7 +441,10 @@ export class Race {
   private finishRoll(k: Kart) {
     k.rollT = 0;
     const plane = this.projectiles.some((p) => p.kind === 'plane' && !p.dead);
-    const item = drawItem(k.place, this.karts.length, this.itemMode, this.rand, plane);
+    // The gap is to the leader of those still racing: a finished kart driving on home is not the bar.
+    const leader = Math.max(k.dist, ...this.karts.filter((o) => !o.finished).map((o) => o.dist));
+    const rank = itemRank(k.place, this.karts.length, leader - k.dist, this.track.length);
+    const item = drawItem(rank, this.itemMode, this.rand, plane);
     k.item = item;
     k.itemCount = usesOf(item);
     k.heldT = 0;
@@ -439,7 +479,7 @@ export class Race {
         break;
       case 'nitro':
       case 'nitro3':
-        k.giveBoost(1.35, 1.5);
+        k.giveBoost(1.35, 1.5, BOOST_KICK);
         this.events.push({ t: 'boost', k: k.index, kind: 'nitro', level: 2 });
         break;
       case 'sugar':
@@ -868,28 +908,52 @@ export class Race {
         const d = Math.sqrt(d2);
         const nx = dx / d;
         const nz = dz / d;
-        const ma = a.params.mass * (a.star > 0 || a.rocket > 0 ? 6 : 1);
-        const mb = b.params.mass * (b.star > 0 || b.rocket > 0 ? 6 : 1);
+        const ma = heft(a);
+        const mb = heft(b);
         const overlap = R - d;
         a.x -= nx * overlap * (mb / (ma + mb));
         a.z -= nz * overlap * (mb / (ma + mb));
         b.x += nx * overlap * (ma / (ma + mb));
         b.z += nz * overlap * (ma / (ma + mb));
         const rel = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
-        if (rel < 0) {
-          const e = 0.6;
-          const j2 = (-(1 + e) * rel) / (1 / ma + 1 / mb);
-          a.vx -= (j2 / ma) * nx;
-          a.vz -= (j2 / ma) * nz;
-          b.vx += (j2 / mb) * nx;
-          b.vz += (j2 / mb) * nz;
+        // The lighter kart takes the bigger share of a bump: half each when equal.
+        const shareA = mb / (ma + mb);
+        const shareB = ma / (ma + mb);
+        if (-rel > BUMP.minClosing && a.bumpCool === 0 && b.bumpCool === 0) {
+          // A bump: the karts bounce apart with a set shove plus part of the speed they closed in with, lose a
+          // little speed, and a glancing one turns each nose away from the other. Never a spin.
+          const j2 = (-(1 + BUMP.elastic) * rel) / (1 / ma + 1 / mb);
+          for (const [k, s, sign] of [[a, shareA, -1], [b, shareB, 1]] as const) {
+            const keep = 1 - (1 - BUMP.keep) * 2 * s;
+            if (k.star === 0 && k.rocket === 0) {
+              k.vx *= keep;
+              k.vz *= keep;
+            }
+            k.vx += sign * nx * ((k === a ? j2 / ma : j2 / mb) + BUMP.push * 2 * s);
+            k.vz += sign * nz * ((k === a ? j2 / ma : j2 / mb) + BUMP.push * 2 * s);
+            if (!k.stun) {
+              // How much the other kart is beside this one rather than ahead or behind: 1 side by side.
+              const side = -sign * (nx * rightX(k.h) + nz * rightZ(k.h));
+              // Other kart on the right: turn left (heading up), and the other way round.
+              k.h = wrapAngle(k.h + Math.sign(side) * BUMP.yaw * Math.abs(side) * 2 * s);
+            }
+            k.bumpCool = BUMP.cooldown;
+          }
+        } else {
+          // Rubbing along each other, or just bumped: solid bodies. They stop closing in and get only the
+          // slightest shove apart, so side by side racing is not a bump every frame and karts never lock together.
+          if (rel < 0) {
+            const j2 = -rel / (1 / ma + 1 / mb);
+            a.vx -= (j2 / ma) * nx;
+            a.vz -= (j2 / ma) * nz;
+            b.vx += (j2 / mb) * nx;
+            b.vz += (j2 / mb) * nz;
+          }
+          a.vx -= nx * BUMP.rub * shareA;
+          a.vz -= nz * BUMP.rub * shareA;
+          b.vx += nx * BUMP.rub * shareB;
+          b.vz += nz * BUMP.rub * shareB;
         }
-        // A shove apart even at a crawl, so karts never lock together.
-        const push = 3;
-        a.vx -= nx * push * (mb / (ma + mb));
-        a.vz -= nz * push * (mb / (ma + mb));
-        b.vx += nx * push * (ma / (ma + mb));
-        b.vz += nz * push * (ma / (ma + mb));
         const strength = Math.max(0, -rel);
         const aBig = a.star > 0 || a.rocket > 0;
         const bBig = b.star > 0 || b.rocket > 0;
@@ -914,6 +978,84 @@ export class Race {
         }
       }
     }
+  }
+
+  /**
+   * Slipstream: tuck in close behind a moving kart for a moment and its wake slings you past. A catch-up that
+   * rewards driving close, as Mario Kart's does.
+   */
+  private draftStep(dt: number) {
+    for (const k of this.karts) {
+      // Below zero is the wait after a slipstream boost before the next can build.
+      if (k.draftT < 0) {
+        k.draftT = Math.min(0, k.draftT + dt);
+        continue;
+      }
+      const fast = k.speed > k.params.maxSpeed * 0.7;
+      if (!fast || !k.grounded || k.stunned || k.boost > 0 || k.rocket > 0 || k.finished) {
+        k.draftT = Math.max(0, k.draftT - dt * 2);
+        continue;
+      }
+      const fx = fwdX(k.h);
+      const fz = fwdZ(k.h);
+      let tucked = false;
+      for (const o of this.karts) {
+        if (o === k || o.respawnT > 0 || o.speed < o.params.maxSpeed * 0.7) continue;
+        // Following, not crossing: both pointing the same way.
+        if (Math.abs(wrapAngle(o.h - k.h)) > DRAFT.align) continue;
+        const dx = o.x - k.x;
+        const dz = o.z - k.z;
+        const ahead = dx * fx + dz * fz;
+        if (ahead < DRAFT.near || ahead > DRAFT.far) continue;
+        if (Math.abs(dx * fz - dz * fx) > DRAFT.side) continue;
+        tucked = true;
+        break;
+      }
+      k.draftT = tucked ? k.draftT + dt : Math.max(0, k.draftT - dt * 1.5);
+      if (k.draftT >= DRAFT.time) {
+        k.draftT = -DRAFT.cooldown;
+        // A slingshot out of the wake: gentler than a drift boost's kick.
+        k.giveBoost(DRAFT.boost, DRAFT.mul, BOOST_KICK * 0.6);
+        this.events.push({ t: 'boost', k: k.index, kind: 'draft', level: 1 });
+      }
+    }
+  }
+
+  /**
+   * Smart steering, an assist: when the kart is about to run off the road (over a drop, into water, onto the
+   * grass), the steering is pulled back toward the road until it is safe. Like Mario Kart's, it only acts near
+   * the edge and leaves the rest of the driving alone.
+   */
+  private smartSteer(k: Kart) {
+    if (!k.grounded || k.stunned || k.rocket > 0 || k.finished || k.speed < 8) return;
+    const g = this.track.grid;
+    const here = g.index(k.x, k.z);
+    const unsafe = (t: number) => {
+      const i = g.index(k.x + k.vx * t, k.z + k.vz * t);
+      if (i < 0 || g.outside[i]) return true;
+      const s = g.surf[i];
+      if (s === SURF.void || s === SURF.water) return true;
+      // Grass beside the road is off-road, and already on it the way back is toward the road; a rough
+      // shortcut is road of its own.
+      const path = g.path[i] >= 0 ? this.track.paths[g.path[i]] : null;
+      return s === SURF.rough && path?.surface !== SURF.rough;
+    };
+    const look = 0.3 + 0.25 * clamp(k.speed / k.params.maxSpeed, 0, 1);
+    const soon = unsafe(look * 0.5);
+    // Once helping, it keeps on a moment after the danger clears, so it does not flicker on and off at the edge.
+    if (!soon && !unsafe(look) && k.assistT < 0.2) return;
+    let want: number;
+    const on = here >= 0 ? g.path[here] : -1;
+    if (on > 0) {
+      // On a shortcut: back toward its middle.
+      want = clamp(-g.lat[here] * 0.4, -1, 1);
+    } else {
+      // On the main road: toward the racing line ahead, a little more firmly than a computer would steer.
+      want = clamp(-wrapAngle(this.autopilotHeading(k) - k.h) * 3.5, -1, 1);
+    }
+    // About to go over: it takes the wheel. Further off: it leans on it hard but leaves a little to the player.
+    k.input = { ...k.input, steer: lerp(k.input.steer, want, soon ? 1 : 0.85) };
+    k.assistT = 0.4;
   }
 
   /** Heading that keeps a rocket on the racing line. */

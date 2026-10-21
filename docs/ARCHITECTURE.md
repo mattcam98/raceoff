@@ -47,15 +47,24 @@ never eat one.
     spatial hash. Walls open automatically where another road meets them.
 - **Karts** (`kart.ts`) are arcade physics on that grid: a heading, a forward
   speed that closes on top speed, and sideways slip that grip removes. A drift
-  always turns into the bend, on an arc the steering trims between wide and a
-  little tighter than full lock, eased so it never jerks. It keeps its momentum
-  (grip redirects the slide into the nose rather than scrubbing it off) and the
+  always turns into the bend, on an arc the steering trims between wide and
+  well past full lock, eased so it never jerks; every kart drifts much alike,
+  handling mostly changes ordinary steering. It keeps its momentum (grip
+  redirects the slide into the nose rather than scrubbing it off) and the
   body's swing into the corner is a pose that eases in and out, so the kart goes
-  where it points; charge builds into a boost. The
+  where it points. Charge builds at full rate for any real lean into the bend
+  (a switch, not a slider, as in Mario Kart) into a boost. Steering from keys
+  and arrow buttons is eased in; analog steering is passed through almost as
+  is. Walls and ledges scrub speed by how square-on the hit was, so a graze
+  costs almost nothing. The optional automatic drift lives here too. The
   kart leaves the ground only when gravity could not hold it there, which is
-  what makes a ramp's lip a launch.
+  what makes a ramp's lip a launch. `docs/HANDLING.md` has the research and
+  measurements behind these numbers.
 - **The race** (`race.ts`) steps everything: inputs, karts, items in flight,
-  drops, hazards, kart-against-kart shoves, item boxes, progress, laps and
+  drops, hazards, kart-against-kart bumps (karts closing in slowly only rub; a
+  real bump shoves apart, costs a little speed and turns glancing noses away,
+  then a short cooldown; a moving or boosting kart is heavier), slipstreams, the graded rocket start, smart steering, item boxes
+  (drawn by the gap to the leader more than by place), progress, laps and
   places, falls and the lift back onto the track. Its unwrapped distance is the
   ranking. Everything worth a sound or an effect goes onto `events`.
 - **Computers** (`ai.ts`) follow the racing line with their own wandering lane,

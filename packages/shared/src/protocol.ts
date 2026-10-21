@@ -139,7 +139,9 @@ export interface Hud {
   wrongWay: boolean;
 }
 
-export type HapticKind = 'hit' | 'item' | 'boost' | 'bump' | 'lap' | 'finish' | 'go' | 'tick';
+/** `spark1`-`spark3`: the drift's sparks turned blue, orange, purple; one, two, three pulses. */
+export type HapticKind = 'hit' | 'item' | 'boost' | 'bump' | 'lap' | 'finish' | 'go' | 'tick' | 'spark1' | 'spark2' | 'spark3';
+export const HAPTIC_KINDS: readonly HapticKind[] = ['hit', 'item', 'boost', 'bump', 'lap', 'finish', 'go', 'tick', 'spark1', 'spark2', 'spark3'];
 
 // ---------------------------------------------------------------- input (phone → TV)
 
@@ -150,6 +152,11 @@ export const BTN = {
   drift: 4,
   /** Held to aim an item backwards, like holding back on a stick. */
   back: 8,
+  /** Steering comes from all-or-nothing arrows, so the TV eases it in. */
+  digital: 16,
+  /** The player's assists, chosen on their phone. */
+  autoDrift: 32,
+  smart: 64,
 } as const;
 
 export const InputSchema = z.object({

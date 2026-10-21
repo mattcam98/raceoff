@@ -7,7 +7,7 @@
  * only ever speak for its own player, and only the VIP can change settings.
  */
 import {
-  BodyIdSchema, CharacterIdSchema, CHARACTERS, IDLE_STATUS, InputSchema, MAX_PLAYERS, MenuCommandSchema,
+  BodyIdSchema, CharacterIdSchema, CHARACTERS, HAPTIC_KINDS, IDLE_STATUS, InputSchema, MAX_PLAYERS, MenuCommandSchema,
   NameSchema, PickSchema, RaceReportSchema, RoomSettingsPatchSchema, RoomSettingsSchema,
   type ClientToServerEvents, type GameStatus, type HapticKind, type Hud, type LiveRoomView, type PlayerInfo, type RoomSettings, type RoomView,
   type ServerToClientEvents,
@@ -44,7 +44,7 @@ export interface RoomSnapshot {
   updatedAt: number;
 }
 
-const HAPTICS: HapticKind[] = ['hit', 'item', 'boost', 'bump', 'lap', 'finish', 'go', 'tick'];
+const HAPTICS: readonly HapticKind[] = HAPTIC_KINDS;
 
 export class Room {
   private seats = new Map<string, Seat>();

@@ -510,6 +510,9 @@ export class Director {
         drift: (p.b & BTN.drift) !== 0,
         back: (p.b & BTN.back) !== 0 || (p.b & BTN.brake) !== 0,
         item,
+        digital: (p.b & BTN.digital) !== 0,
+        autoDrift: (p.b & BTN.autoDrift) !== 0,
+        smart: (p.b & BTN.smart) !== 0,
       };
     });
   }
@@ -550,7 +553,11 @@ export class Director {
       for (const k of race.karts) {
         if (k.cpu) continue;
         const level = k.driftLevel;
-        if (level > this.driftLevels[k.index]) play(`spark${level}` as SoundName, this.panOf(k.index), 0.8);
+        if (level > this.driftLevels[k.index]) {
+          play(`spark${level}` as SoundName, this.panOf(k.index), 0.8);
+          // With several players on one TV the chime does not say whose sparks they are; a buzz in the hand does.
+          this.haptic(k.index, `spark${level}` as HapticKind);
+        }
         this.driftLevels[k.index] = level;
       }
     }
@@ -629,6 +636,10 @@ export class Director {
         } else if (e.kind === 'trick') {
           play('trick', this.panOf(e.k));
           this.hud.banner(e.k, 'TRICK!', 'good', 900);
+        } else if (e.kind === 'draft') {
+          play('whoosh', this.panOf(e.k), 0.7);
+          this.haptic(e.k, 'boost');
+          this.hud.banner(e.k, 'SLIPSTREAM!', 'good', 800);
         }
         break;
       case 'drift':

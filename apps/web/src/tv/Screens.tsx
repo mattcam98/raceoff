@@ -5,7 +5,10 @@ import type { Director, DirectorState } from './director';
 
 const TIPS = [
   'Hold DRIFT and steer to slide round corners. Let go when the sparks turn orange for a bigger boost.',
-  'Tap DRIFT just as GO appears for a rocket start. Too early and you stall!',
+  'Tap DRIFT just as GO appears for a rocket start: the closer to GO, the longer the boost. Too early and you stall!',
+  'Tuck in right behind another racer for a moment and their slipstream slings you past.',
+  'Purple sparks need you to lean into the bend. Hold out for them and the boost lasts far longer.',
+  'New to drifting? Turn on "Drift by itself" or "Smart steering" in your phone’s ⚙ controls.',
   'Hold BRAKE while using an item to throw it backwards.',
   'Off-road slows you down, unless you are boosting. Shortcuts love a Nitro.',
   'Press DRIFT in mid-air off a ramp to do a trick and land with a boost.',

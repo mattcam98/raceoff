@@ -31,6 +31,8 @@ const HEARTBEAT_MS = 120;
 const DEAD_ZONE = 0.06;
 /** Tilt for full lock, in radians (about 30 degrees). */
 const TILT_LOCK = 0.52;
+/** Share of each new tilt reading taken in: hands shake and the sensor is noisy, so a little smoothing, at a frame or two of lag. */
+const TILT_SMOOTH = 0.35;
 
 /** Keep a finger's events coming to this element. Some browsers throw for a finger that has already lifted. */
 function capture(e: React.PointerEvent) {
@@ -57,6 +59,8 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   });
   const [tiltAsleep, setTiltAsleep] = useState(() => mode === 'tilt' && motionNeedsTap());
   const [autoGas, setAutoGas] = useState<boolean>(() => prefs.get('autoGas', true));
+  const [autoDrift, setAutoDrift] = useState<boolean>(() => prefs.get('autoDrift', false));
+  const [smart, setSmart] = useState<boolean>(() => prefs.get('smart', false));
   const [sens, setSens] = useState<number>(() => prefs.get('sens', 1));
   const [invertTilt, setInvertTilt] = useState<boolean>(() => prefs.get('invertTilt', false));
   const [menu, setMenu] = useState(false);
@@ -79,6 +83,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   /** Thumb travel for full lock, in pixels. */
   const range = useRef(64);
   const tiltNeutral = useRef<number | null>(null);
+  const tiltSmooth = useRef(0);
   const arrows = useRef(new Map<number, -1 | 1>());
 
   useEffect(() => {
@@ -143,6 +148,9 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       // Holding DRIFT keeps the power on too, so a drift never needs a second thumb for the gas.
       if ((autoGas && !document.hidden) || b & BTN.drift) b |= BTN.gas;
       if (b & BTN.brake) b &= ~BTN.gas;
+      if (mode === 'buttons') b |= BTN.digital;
+      if (autoDrift) b |= BTN.autoDrift;
+      if (smart) b |= BTN.smart;
       const key = `${s}|${b}|${items.current}`;
       const now = performance.now();
       if (key !== last || now - lastAt > HEARTBEAT_MS) {
@@ -152,7 +160,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       }
     }, SEND_MS);
     return () => window.clearInterval(t);
-  }, [link, autoGas]);
+  }, [link, autoGas, mode, autoDrift, smart]);
 
   // Item roulette on the phone too.
   useEffect(() => {
@@ -174,13 +182,17 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       const sx = g.x * Math.cos(t) + g.y * Math.sin(t);
       const sy = -g.x * Math.sin(t) + g.y * Math.cos(t);
       const angle = Math.atan2(sx, -sy);
-      if (tiltNeutral.current === null) tiltNeutral.current = angle;
+      if (tiltNeutral.current === null) {
+        tiltNeutral.current = angle;
+        tiltSmooth.current = 0;
+      }
       let d = angle - tiltNeutral.current;
       if (d > Math.PI) d -= Math.PI * 2;
       if (d < -Math.PI) d += Math.PI * 2;
       const raw = Math.max(-1, Math.min(1, (d / TILT_LOCK) * sens * (invertTilt ? -1 : 1)));
-      steer.current = shape(raw);
-      showSteer(raw);
+      tiltSmooth.current += (raw - tiltSmooth.current) * TILT_SMOOTH;
+      steer.current = shape(tiltSmooth.current);
+      showSteer(tiltSmooth.current);
     };
     window.addEventListener('devicemotion', onMotion);
     return () => {
@@ -553,8 +565,39 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
               />
               <span>Accelerate automatically</span>
             </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={autoDrift}
+                onChange={(e) => {
+                  setAutoDrift(e.target.checked);
+                  prefs.set('autoDrift', e.target.checked);
+                }}
+              />
+              <span>
+                Drift by itself
+                <small>Hold a hard turn to slide; straighten up for the boost. Up to orange sparks.</small>
+              </span>
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={smart}
+                onChange={(e) => {
+                  setSmart(e.target.checked);
+                  prefs.set('smart', e.target.checked);
+                }}
+              />
+              <span>
+                Smart steering
+                <small>Steers you back near the edges. Drifts stop at orange.</small>
+              </span>
+            </label>
             {canVibrate() && <VibrationToggle />}
-            <p className="dim sheet__tip">Drifting: hold DRIFT and steer into the bend to tighten it, out of it to widen it. Let go for a boost.</p>
+            <p className="dim sheet__tip">
+              Drifting: hold DRIFT and steer into the bend to tighten it, out of it to widen it. Any lean into the bend charges
+              fully. Let go for a boost: blue, orange, then purple sparks{canVibrate() ? ', one buzz per colour' : ''}.
+            </p>
             <button className="btn btn--go" onClick={() => setMenu(false)}>
               Done
             </button>

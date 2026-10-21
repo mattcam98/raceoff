@@ -52,6 +52,8 @@ export class GameView {
   private world: World | null = null;
   private items: ItemsView | null = null;
   private rigs: KartRig[] = [];
+  /** Each kart's drift spark level last frame, to burst when it goes up. */
+  private sparkLevels: number[] = [];
   private race: Race | null = null;
   private track: Track | null = null;
   readonly fx = new Fx();
@@ -180,6 +182,7 @@ export class GameView {
       this.scene.add(rig.root, rig.shadow);
       return rig;
     });
+    this.sparkLevels = race.karts.map(() => 0);
     this.fx.clear();
     this.skids.clear();
     this.layout = layout;
@@ -465,7 +468,10 @@ export class GameView {
     const boost = k.boost > 0 || k.rocket > 0;
     const dist = 7.2 + speed * 0.05 + (boost ? 1.2 : 0);
     const height = 3.1 + speed * 0.02;
-    const want = tmpV2.set(kp.x - Math.sin(c.heading) * dist, kp.y + height, kp.z - Math.cos(c.heading) * dist);
+    // A drift's hop is a little bounce under a steady camera: hold the height of the ground through it, so the
+    // view does not bob on every drift. Real jumps are followed as before.
+    const baseY = k.hopping ? Math.min(kp.y, k.groundY) : kp.y;
+    const want = tmpV2.set(kp.x - Math.sin(c.heading) * dist, baseY + height, kp.z - Math.cos(c.heading) * dist);
     // Keep the camera above the ground it is over.
     const g = this.track!.grid.heightAt(want.x, want.z, this.track!.def.floorY);
     want.y = Math.max(want.y, g + 1.5);
@@ -480,7 +486,7 @@ export class GameView {
     const lookAhead = 3.5;
     c.look.set(
       damp(c.look.x, kp.x + Math.sin(c.heading) * lookAhead, 16, dt),
-      damp(c.look.y, kp.y + 1.5, 8, dt),
+      damp(c.look.y, baseY + 1.5, 8, dt),
       damp(c.look.z, kp.z + Math.cos(c.heading) * lookAhead, 16, dt),
     );
     c.fov = damp(c.fov, boost ? 80 : 66 + speed * 0.08, 4, dt);
@@ -651,12 +657,16 @@ export class GameView {
     if (k.driftDir && k.grounded) {
       const level = k.driftLevel;
       const n = level === 0 ? 1 : 2 + level;
+      // A new colour pops: a burst from each rear wheel, so it is caught from the corner of the eye.
+      const popped = level > (this.sparkLevels[k.index] ?? 0);
       for (const w of rig.rearWheels) {
         tmpV.copy(w).applyMatrix4(rig.body.matrixWorld);
         for (let i = 0; i < n; i++) if (Math.random() < 0.7) this.fx.spark(tmpV.x, tmpV.y + 0.15, tmpV.z, SPARK_COLORS[level], 0.6 + level * 0.25);
         if (level === 0 && Math.random() < 0.3) this.fx.dust(tmpV.x, tmpV.y, tmpV.z, '#e8e4dc', 0.8);
+        if (popped) this.fx.burst(tmpV.x, tmpV.y + 0.3, tmpV.z, [SPARK_COLORS[level], '#ffffff'], 14 + level * 4, 7 + level * 2, 0.55, 0.35);
       }
     }
+    this.sparkLevels[k.index] = k.driftDir ? k.driftLevel : 0;
     // Exhaust flames while boosting.
     if (k.boost > 0 || k.rocket > 0) {
       for (const ex of rig.exhausts) {
@@ -667,6 +677,19 @@ export class GameView {
         tmpV.set(0, 1.2, -2.1).applyMatrix4(rig.body.matrixWorld);
         for (let i = 0; i < 4; i++) this.fx.flame(tmpV.x, tmpV.y, tmpV.z, -fwdX(k.h) * 14, -fwdZ(k.h) * 14, false);
       }
+    }
+    // Slipstream building: air streams back past the kart, thicker as the boost nears.
+    if (k.draftT > 0.15) {
+      const rx = -Math.cos(h);
+      const rz = Math.sin(h);
+      for (let i = 0; i < 1 + Math.round(k.draftT * 1.5); i++) {
+        const off = (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 0.6);
+        this.fx.streak(p.x + rx * off + fwdX(h) * 1.5, p.y + 0.6 + Math.random() * 1.2, p.z + rz * off + fwdZ(h) * 1.5, -fwdX(h) * 26, -fwdZ(h) * 26);
+      }
+    }
+    // Smart steering helping: a little glint off the nose, so it is clear the kart was steered for you.
+    if (k.assistT > 0 && Math.random() < 0.5) {
+      this.fx.spark(p.x + fwdX(h) * 1.6, p.y + 1.1, p.z + fwdZ(h) * 1.6, '#7fe7ff', 0.35);
     }
     // Dust kicked up off-road.
     if (k.grounded && sp > 0.25 && (k.surface === SURF.rough || k.surface === SURF.sand) && Math.random() < sp * 0.7) {

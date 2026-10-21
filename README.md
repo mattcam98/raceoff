@@ -94,10 +94,12 @@ can switch to tilt (tap the left side to recentre) or two big arrows you can
 slide between. The right thumb has, on its natural arc:
 
 - **DRIFT**, the big button under the resting thumb: hold it while turning to
-  hop into a power slide. The drift keeps your speed; steer into the bend to
-  tighten it, out of it to widen it, or hands off to hold a steady arc. Sparks
-  build from blue to orange to purple; let go for a speed boost that grows with
-  them. Tap it in mid-air off a ramp for a trick and a boost on landing.
+  hop into a power slide. The drift keeps your speed and turns tighter than
+  the tyres can grip; steer into the bend to tighten it, out of it to widen
+  it, or hands off to hold a steady arc. Sparks build from blue to orange to
+  purple, fastest while you lean into the bend (any real lean counts, not only
+  full lock); let go for a speed boost that grows with them, purple by far the
+  longest. Tap it in mid-air off a ramp for a trick and a boost on landing.
 - **ITEM**, up and in from DRIFT: use what you are holding. Hold **BRAKE** at
   the same time to throw it backwards.
 - **BRAKE**: slow down, and reverse when stopped.
@@ -105,8 +107,16 @@ slide between. The right thumb has, on its natural arc:
 Held sideways, the place and lap are in the top bar; held upright, they fill the
 top half and both thumbs work along the bottom. The kart accelerates on its
 own; turn that off under ⚙ for a GAS button (holding DRIFT accelerates too).
-Tap DRIFT just as GO appears for a rocket start (too early and you stall).
-Android phones buzz on hits, items and laps.
+Tap DRIFT just as GO appears for a rocket start: the nearer GO, the longer the
+boost (too early and you stall). Tuck in right behind another kart for a moment
+and its slipstream slings you past. Android phones buzz on hits, items and
+laps, and once, twice, three times as the drift sparks turn blue, orange and
+purple, so you can feel when to let go.
+
+Two assists under ⚙, each per player: **Drift by itself** slides on its own
+when you hold a hard turn and cashes in when you straighten up, and **Smart
+steering** steers you back when you are about to leave the road. Both stop the
+sparks at orange: purple is for drifting by hand.
 
 **On the keyboard.** For a quick game without phones, add up to two keyboard
 players in the lobby: W A S D, Space to drift, E for items; and the arrow
