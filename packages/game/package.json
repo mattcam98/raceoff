@@ -1,0 +1,15 @@
+{
+  "name": "@raceoff/game",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@raceoff/shared": "^1.0.0"
+  }
+}
