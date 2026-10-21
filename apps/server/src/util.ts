@@ -1,4 +1,5 @@
-import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomInt, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '@raceoff/shared';
 
@@ -30,12 +31,43 @@ export const randomToken = (bytes = 24) => randomBytes(bytes).toString('base64ur
 export const randomId = (bytes = 6) => randomBytes(bytes).toString('base64url');
 export const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 
+/** Compare two strings in constant time. */
+export function safeEqual(a: string, b: string) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
 /** Tokens are stored hashed, so nothing kept in memory or on disk can be replayed as one. */
-export function tokenMatches(token: string | undefined, hash: string | undefined) {
-  if (!token || !hash) return false;
-  const a = Buffer.from(sha256(token));
-  const b = Buffer.from(hash);
-  return a.length === b.length && timingSafeEqual(a, b);
+export const tokenMatches = (token: string | undefined, hash: string | undefined) => !!token && !!hash && safeEqual(sha256(token), hash);
+
+const derive = (password: string, salt: Buffer, length: number, options: ScryptOptions) =>
+  new Promise<Buffer>((resolve, reject) => scrypt(password, salt, length, options, (err, key) => (err ? reject(err) : resolve(key))));
+
+/** scrypt cost: 2^15 blocks of 1 KiB, about 32 MB and a twentieth of a second per guess. */
+const SCRYPT = { logN: 15, r: 8, p: 1 };
+const scryptOptions = (logN: number, r: number, p: number): ScryptOptions => ({ N: 2 ** logN, r, p, maxmem: 256 * 2 ** logN * r });
+
+/**
+ * Hash a password for storage. The cost parameters travel with the hash, so they can be raised later
+ * without invalidating existing passwords. The work happens off the main thread, so signing in never
+ * stalls a race.
+ */
+export async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = await derive(password, salt, 32, scryptOptions(SCRYPT.logN, SCRYPT.r, SCRYPT.p));
+  return ['scrypt', SCRYPT.logN, SCRYPT.r, SCRYPT.p, salt.toString('base64url'), key.toString('base64url')].join('$');
+}
+
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [scheme, logN, r, p, salt, expected] = stored.split('$');
+  if (scheme !== 'scrypt' || !salt || !expected) return false;
+  const want = Buffer.from(expected, 'base64url');
+  const cost = [Number(logN), Number(r), Number(p)] as const;
+  // Refuse absurd parameters rather than let a tampered file tie up the server.
+  if (!cost.every(Number.isInteger) || cost[0] < 10 || cost[0] > 20 || cost[1] < 1 || cost[1] > 16 || cost[2] < 1 || cost[2] > 4) return false;
+  const got = await derive(password, Buffer.from(salt, 'base64url'), want.length, scryptOptions(...cost));
+  return got.length === want.length && timingSafeEqual(got, want);
 }
 
 export function randomRoomCode() {
@@ -71,15 +103,22 @@ export class Limiter {
   }
 }
 
-/** The client's address, believing `trust` proxies' X-Forwarded-For entries. */
+/** The client's address, believing `trust` proxies' X-Forwarded-For entries. IPv4 comes back plain, not as ::ffff:1.2.3.4. */
 export function clientAddress(direct: string | undefined, forwarded: string | string[] | undefined, trust: number): string {
   const list = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? '')).split(',').map((s) => s.trim()).filter(Boolean);
-  if (trust > 0 && list.length) return list[Math.max(0, list.length - trust)] ?? direct ?? 'unknown';
-  return direct ?? 'unknown';
+  const raw = trust > 0 && list.length ? (list[Math.max(0, list.length - trust)] ?? direct) : direct;
+  return raw ? raw.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, '') : 'unknown';
 }
 
-/** This machine's addresses on the local network, so a TV opened as localhost can still show phones where to go. */
+/** Docker and Podman leave these behind in every container. */
+export const inContainer = existsSync('/.dockerenv') || existsSync('/run/.containerenv');
+
+/**
+ * This machine's addresses on the local network, so a TV opened as localhost can still show phones where to go.
+ * None in a container: its addresses are on the container's own network, which phones cannot reach.
+ */
 export function lanAddresses(): string[] {
+  if (inContainer) return [];
   const out: string[] = [];
   for (const list of Object.values(networkInterfaces())) {
     for (const a of list ?? []) {

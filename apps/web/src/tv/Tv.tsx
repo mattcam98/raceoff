@@ -109,6 +109,12 @@ function TvRoom({ code, roomKey }: { code: string; roomKey: string }) {
     if (director && snap?.room) director.setRoom(snap.room);
   }, [director, snap?.room]);
 
+  // Another screen took the room over, or it closed: stop racing, rendering and playing sound behind the notice.
+  const over = snap?.status === 'ended' || snap?.status === 'rejected';
+  useEffect(() => {
+    if (over) director?.end();
+  }, [over, director]);
+
   // Keys for the TV itself: full screen, pause.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

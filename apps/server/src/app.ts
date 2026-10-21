@@ -2,31 +2,52 @@
 import { existsSync } from 'node:fs';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { createServer, type Server as HttpServer } from 'node:http';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HandshakeSchema, normalizeRoomCode, type CreateRoomResponse, type JoinResponse } from '@raceoff/shared';
+import {
+  ChangePasswordSchema, HandshakeSchema, LoginSchema, normalizeRoomCode, RemoveRecordSchema, ServerSettingsSchema, SetupSchema,
+  type AdminStatus, type AdminView, type CreateRoomResponse, type JoinResponse,
+} from '@raceoff/shared';
 import compression from 'compression';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { Server } from 'socket.io';
+import type { z } from 'zod';
+import { Admin, type Caller } from './admin';
 import type { Config } from './config';
 import { VERSION } from './config';
 import { Records } from './records';
 import { Room, type AppServer, type RoomSnapshot } from './room';
-import { clientAddress, lanAddresses, Limiter, log, randomRoomCode, randomToken, sha256 } from './util';
+import { clientAddress, inContainer, lanAddresses, Limiter, log, randomRoomCode, randomToken, sha256 } from './util';
 
 const MAX_ROOMS = 300;
-/** A room whose TV has been gone this long, with nobody doing anything, is closed. */
-const ROOM_IDLE_MS = 30 * 60_000;
 const SWEEP_MS = 60_000;
+const MINUTE_MS = 60_000;
 
 export interface App {
   server: HttpServer;
   rooms: Map<string, Room>;
+  admin: Admin;
   close(): Promise<void>;
 }
 
+/** Thrown from a route to answer with a status and a message the page can show. */
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export async function createApp(config: Config): Promise<App> {
-  const records = await Records.load(config.DATA_DIR || null);
+  const startedAt = Date.now();
+  const dataDir = config.DATA_DIR || null;
+  const admin = await Admin.load(dataDir);
+  if (admin.setupCode) {
+    log.warn(`no admin password yet: open /settings and enter the setup code ${admin.setupCode} to choose one`, { setupCode: admin.setupCode });
+  }
+  const records = await Records.load(dataDir);
   const rooms = new Map<string, Room>();
   const server = createServer();
   const io: AppServer = new Server(server, {
@@ -72,8 +93,8 @@ export async function createApp(config: Config): Promise<App> {
     try {
       const snaps = JSON.parse(await readFile(roomsFile, 'utf8')) as RoomSnapshot[];
       for (const snap of snaps) {
-        if (Date.now() - snap.updatedAt > ROOM_IDLE_MS * 4) continue;
-        addRoom(Room.restore(io, snap, records));
+        if (Date.now() - snap.updatedAt > admin.settings.roomIdleMinutes * MINUTE_MS * 4) continue;
+        addRoom(Room.restore(io, snap, records, admin.settings.roomDefaults));
       }
       if (rooms.size) log.info('restored rooms', { count: rooms.size });
     } catch (err) {
@@ -83,7 +104,6 @@ export async function createApp(config: Config): Promise<App> {
 
   const http = express();
   http.disable('x-powered-by');
-  http.set('trust proxy', config.TRUST_PROXY);
   http.use(compression());
   http.use(express.json({ limit: '16kb' }));
   http.use((_req, res, next) => {
@@ -92,12 +112,16 @@ export async function createApp(config: Config): Promise<App> {
     next();
   });
 
-  const address = (req: Request) => clientAddress(req.socket.remoteAddress, req.headers['x-forwarded-for'], config.TRUST_PROXY);
+  // Read on every request, so a change to the proxy setting applies at once.
+  const address = (req: Request) => clientAddress(req.socket.remoteAddress, req.headers['x-forwarded-for'], admin.settings.trustProxy);
+  const caller = (req: Request): Caller => ({ ip: address(req), agent: req.get('user-agent') ?? '' });
   const creating = new Limiter(0.2, 6);
   const joining = new Limiter(1, 12);
+  // Each guess costs a twentieth of a second of scrypt: a handful in a burst, then one every ten seconds.
+  const guessing = new Limiter(0.1, 6);
 
   http.get('/api/health', (_req, res) => void res.json({ ok: true, version: VERSION, rooms: rooms.size }));
-  http.get('/api/info', (_req, res) => void res.json({ publicUrl: config.PUBLIC_URL || null, lan: lanAddresses(), version: VERSION }));
+  http.get('/api/info', (_req, res) => void res.json({ publicUrl: admin.settings.publicUrl, lan: lanAddresses(), version: VERSION }));
   http.get('/api/records', (_req, res) => void res.json(records.view));
 
   http.post('/api/rooms', (req, res) => {
@@ -109,7 +133,7 @@ export async function createApp(config: Config): Promise<App> {
       code = randomRoomCode();
     }
     const key = randomToken(32);
-    addRoom(new Room(io, code, sha256(key), records));
+    addRoom(new Room(io, code, sha256(key), records, admin.settings.roomDefaults));
     log.info('room created', { code });
     const body: CreateRoomResponse = { code, key };
     res.json(body);
@@ -131,14 +155,107 @@ export async function createApp(config: Config): Promise<App> {
     res.json(body);
   });
 
+  // ------------------------------------------------------------ settings (/settings in the app)
+
+  const bearer = (req: Request) => req.get('authorization')?.replace(/^Bearer\s+/i, '');
+  const parse = <T extends z.ZodType>(schema: T, body: unknown): z.output<T> => {
+    const r = schema.safeParse(body);
+    if (!r.success) throw new HttpError(400, r.error.issues[0]?.message ?? 'That was not understood.');
+    return r.data;
+  };
+  const guard = (req: Request) => {
+    if (!guessing.allow(address(req))) throw new HttpError(429, 'Too many tries. Wait a minute.');
+  };
+  const signedIn = (req: Request, _res: Response, next: NextFunction) => {
+    if (admin.allows(bearer(req))) return next();
+    next(new HttpError(401, admin.needsSetup ? 'This server needs setting up first.' : 'Sign in to change settings.'));
+  };
+  const view = (req: Request): AdminView => ({
+    settings: admin.settings,
+    sessions: admin.listSessions(bearer(req)),
+    audit: admin.activity(),
+    rooms: [...rooms.values()].map((r) => r.summary()).sort((a, b) => b.updatedAt - a.updatedAt),
+    server: {
+      version: VERSION, startedAt, inContainer, dataDir,
+      recordPlayers: records.view.players.length, recordTracks: Object.values(records.view.tracks).filter((t) => t.bestLap || t.races.length).length,
+    },
+    // Each proxy adds one address to X-Forwarded-For (Cloudflare the visitor's, a local proxy Cloudflare's).
+    request: { ip: address(req), proxies: String(req.headers['x-forwarded-for'] ?? '').split(',').filter((s) => s.trim()).length },
+  });
+  // Nothing here may be cached by a browser or a proxy.
+  http.use('/api/admin', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+
+  http.get('/api/admin/status', (_req, res) => void res.json({ setup: admin.needsSetup } satisfies AdminStatus));
+  http.post('/api/admin/setup', async (req, res) => {
+    guard(req);
+    const { code, password } = parse(SetupSchema, req.body);
+    if (!admin.needsSetup) throw new HttpError(409, 'This server already has a password. Sign in instead.');
+    const token = await admin.setup(code, password, caller(req));
+    if (!token) throw new HttpError(401, 'That setup code is not right. Check the server log.');
+    res.json({ token });
+  });
+  http.post('/api/admin/login', async (req, res) => {
+    guard(req);
+    const { password } = parse(LoginSchema, req.body);
+    const token = await admin.login(password, caller(req));
+    if (!token) throw new HttpError(401, 'Wrong password.');
+    res.json({ token });
+  });
+  http.post('/api/admin/logout', (req, res) => {
+    admin.logout(bearer(req), caller(req));
+    res.json({ ok: true });
+  });
+  http.get('/api/admin', signedIn, (req, res) => void res.json(view(req)));
+  http.put('/api/admin/settings', signedIn, (req, res) => {
+    admin.update(parse(ServerSettingsSchema, req.body), caller(req));
+    res.json(view(req));
+  });
+  http.post('/api/admin/password', signedIn, async (req, res) => {
+    guard(req);
+    const { current, next } = parse(ChangePasswordSchema, req.body);
+    const token = await admin.changePassword(current, next, caller(req));
+    if (!token) throw new HttpError(401, 'The current password is wrong.');
+    res.json({ token });
+  });
+  http.post('/api/admin/sessions/revoke', signedIn, (req, res) => {
+    admin.revokeOthers(bearer(req), caller(req));
+    res.json(view(req));
+  });
+  http.delete('/api/admin/rooms/:code', signedIn, (req, res) => {
+    const code = normalizeRoomCode(String(req.params.code));
+    const room = rooms.get(code);
+    if (!room) throw new HttpError(404, 'That room has already closed.');
+    room.close('closed');
+    rooms.delete(code);
+    roomsChanged();
+    admin.note('room.closed', caller(req).ip, { code });
+    res.json(view(req));
+  });
+  http.post('/api/admin/records/reset', signedIn, (req, res) => {
+    records.clear();
+    admin.note('records.reset', caller(req).ip);
+    res.json(view(req));
+  });
+  http.post('/api/admin/records/remove', signedIn, (req, res) => {
+    const { name } = parse(RemoveRecordSchema, req.body);
+    if (!records.remove(name)) throw new HttpError(404, 'Nobody by that name is in the Hall of Fame.');
+    admin.note('records.removed', caller(req).ip, { name });
+    res.json(view(req));
+  });
+
   http.use('/api', (_req, res) => void res.status(404).json({ error: 'Not found' }));
 
   // The built web app, with every other path falling through to it so client routes work on reload.
   const here = dirname(fileURLToPath(import.meta.url));
   const webDir = [config.WEB_DIR, resolve(here, '../../web/dist'), resolve(process.cwd(), 'apps/web/dist')].find((d) => d && existsSync(join(d, 'index.html')));
   if (webDir) {
+    // Vite fingerprints everything under assets/, so those never change; the rest is checked hourly.
+    const assets = join(webDir, 'assets') + sep;
     http.use(express.static(webDir, { index: false, maxAge: '1h', setHeaders: (res, path) => {
-      if (path.includes(`${'assets'}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      if (path.startsWith(assets)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     } }));
     http.get('/{*any}', (_req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
@@ -147,7 +264,10 @@ export async function createApp(config: Config): Promise<App> {
   } else {
     log.warn('no built web app found; run `npm run build` (or use `npm run dev`)');
   }
-  http.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  http.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+    if (err instanceof HttpError) return void res.status(err.status).json({ error: err.message });
+    // Malformed or oversized JSON bodies, from express.json().
+    if (err.type === 'entity.parse.failed' || err.type === 'entity.too.large') return void res.status(err.status ?? 400).json({ error: 'That was not understood.' });
     log.error('request failed', { err });
     res.status(500).json({ error: 'Something went wrong.' });
   });
@@ -159,7 +279,7 @@ export async function createApp(config: Config): Promise<App> {
   // Sockets prove who they are once, at the handshake.
   const connections = new Limiter(3, 60);
   io.use((socket, next) => {
-    const addr = clientAddress(socket.handshake.address, socket.handshake.headers['x-forwarded-for'], config.TRUST_PROXY);
+    const addr = clientAddress(socket.handshake.address, socket.handshake.headers['x-forwarded-for'], admin.settings.trustProxy);
     if (!connections.allow(addr)) return next(new Error('rate_limited'));
     const hs = HandshakeSchema.safeParse(socket.handshake.auth);
     if (!hs.success) return next(new Error('bad_handshake'));
@@ -190,7 +310,7 @@ export async function createApp(config: Config): Promise<App> {
   const sweeper = setInterval(() => {
     const now = Date.now();
     for (const [code, room] of rooms) {
-      if (!room.tvConnected && now - Math.max(room.tvSeenAt, room.updatedAt) > ROOM_IDLE_MS) {
+      if (!room.tvConnected && now - Math.max(room.tvSeenAt, room.updatedAt) > admin.settings.roomIdleMinutes * MINUTE_MS) {
         room.close('closed');
         rooms.delete(code);
         roomsChanged();
@@ -203,6 +323,7 @@ export async function createApp(config: Config): Promise<App> {
   return {
     server,
     rooms,
+    admin,
     async close() {
       clearInterval(sweeper);
       if (saveTimer) clearTimeout(saveTimer);
@@ -211,6 +332,7 @@ export async function createApp(config: Config): Promise<App> {
       io.disconnectSockets(true);
       await new Promise<void>((r) => io.close(() => r()));
       await records.flush();
+      await admin.flush();
       server.closeAllConnections();
     },
   };

@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { CHARACTERS, PLAYER_COLORS, PLAYER_LABELS, characterById } from '@raceoff/shared';
 import { clamp, damp, fwdX, fwdZ, lerp, wrapAngle, SURF, type Kart, type Race, type RaceEvent, type Track } from '@raceoff/game';
 import { Fx } from './fx';
+import { disposeTree } from './kit';
 import { ItemsView } from './items3d';
 import { buildKart, shieldUniforms, type KartRig } from './kartModel';
 import { Skids } from './skids';
@@ -77,6 +78,9 @@ export class GameView {
   private hidden = new Set<number>();
   /** Draw the shadow map on the next frame: a new track, or the podium. */
   private shadowsDirty = true;
+  private onContextRestored = () => {
+    this.shadowsDirty = true;
+  };
   private confettiT = 0;
   /** Fired when the viewport layout changes, so the HUD can follow. */
   onLayout: (rects: ViewportRect[]) => void = () => {};
@@ -89,6 +93,8 @@ export class GameView {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
+    // The shadow map is drawn only when the scene changes; a restored context starts with it empty.
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
     this.pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
     this.renderer.setPixelRatio(this.pixelRatio);
 
@@ -152,12 +158,14 @@ export class GameView {
     this.race = race;
     if (this.podiumGroup) {
       this.scene.remove(this.podiumGroup);
+      disposeTree(this.podiumGroup);
       this.podiumGroup = null;
     }
     this.podiumCenter = null;
     this.hidden.clear();
     for (const r of this.rigs) {
       this.scene.remove(r.root, r.shadow);
+      disposeTree(r.root);
     }
     if (this.items) {
       this.scene.remove(this.items.group);
@@ -694,8 +702,11 @@ export class GameView {
   }
 
   dispose() {
+    this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.world?.dispose();
     this.items?.dispose();
+    for (const r of this.rigs) disposeTree(r.root);
+    if (this.podiumGroup) disposeTree(this.podiumGroup);
     this.renderer.dispose();
   }
 }

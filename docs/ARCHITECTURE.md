@@ -20,7 +20,9 @@ The **server is a switchboard** (`apps/server`). It keeps each room's roster
 (names, picked characters and karts, ready flags), the race settings and who
 the host phone is; it relays phone inputs to the TV as they arrive, and passes
 the TV's race status and per-player dashboards back out. It also keeps the
-records file. A room expires half an hour after its TV leaves.
+records file and the server's own settings (`admin.ts`): there is no config
+file, everything is changed on the `/settings` page and read live. A room
+expires a while after its TV leaves (30 minutes unless changed in Settings).
 
 **Phones** (`apps/web/src/phone`) show the kart picker, the controller and the
 results. The controller keeps its state in refs and sends the steering angle,
@@ -88,8 +90,9 @@ without anyone spending long behind a wall.
 |---|---|---|
 | TV | A 256-bit key returned when the room is made, kept in that browser | Everything in its room |
 | Player | A token issued on joining, kept on that phone | Drive and pick for that one player; the host phone also changes settings and moves between races |
+| Administrator | A session from signing in to `/settings` with the password (scrypt-hashed); the very first password needs the one-time setup code from the server log | Change settings, close rooms, edit the Hall of Fame |
 | Anyone | Nothing | Make a room, join one with its code, read the records |
 
 Keys and tokens are stored hashed. Every message from a phone is parsed with a
 zod schema before it is used; each socket has a message budget; making rooms,
-joining and connecting are rate-limited per address.
+joining, connecting and password guesses are rate-limited per address.

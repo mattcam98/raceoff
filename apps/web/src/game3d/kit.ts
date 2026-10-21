@@ -6,6 +6,35 @@ import * as THREE from 'three';
 
 const mats = new Map<string, THREE.Material>();
 
+/** Geometries, materials and textures used by many objects: never freed along with any one of them. */
+const sharedResources = new WeakSet<object>();
+export function shareResource<T extends object>(r: T): T {
+  sharedResources.add(r);
+  return r;
+}
+
+/**
+ * Free the GPU memory of everything under `root` that belongs to it alone: geometries, materials and the
+ * textures those materials own. Shared resources (cached materials and textures, module-wide geometries)
+ * are left alone. three keeps a geometry's buffers until it is disposed, even once nothing draws it.
+ */
+export function disposeTree(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    // Every sprite shares one geometry inside three.
+    if (m.geometry && !(o as THREE.Sprite).isSprite && !sharedResources.has(m.geometry)) m.geometry.dispose();
+    const list = m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : [];
+    for (const material of list) {
+      if (sharedResources.has(material)) continue;
+      for (const value of Object.values(material)) {
+        if ((value as THREE.Texture | null)?.isTexture && !sharedResources.has(value)) (value as THREE.Texture).dispose();
+      }
+      material.dispose();
+    }
+    if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
+  });
+}
+
 export interface MatOpts {
   shiny?: number;
   emissive?: string;
@@ -34,7 +63,7 @@ export function mat(color: string, o: MatOpts = {}): THREE.Material {
   m = o.shiny ? new THREE.MeshPhongMaterial({ ...common, shininess: o.shiny, specular: new THREE.Color('#444444') }) : new THREE.MeshLambertMaterial(common);
   if (common.transparent) (m as THREE.Material).depthWrite = false;
   mats.set(key, m);
-  return m;
+  return shareResource(m);
 }
 
 function mesh(geo: THREE.BufferGeometry, material: THREE.Material | THREE.Material[]) {

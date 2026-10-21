@@ -370,7 +370,11 @@ class Sequencer {
   play(id: SongId, fadeIn = 0.4) {
     const a = audio();
     if (!a) return;
-    if (this.id === id && this.song) return;
+    if (this.id === id && this.song) {
+      // Already playing (a race run again on the same track): just back to normal speed.
+      this.tempo = 1;
+      return;
+    }
     this.stop(0.35);
     const { ctx } = a;
     this.id = id;
@@ -414,6 +418,13 @@ class Sequencer {
     if (!a || !s || !this.bus) return;
     const c = a.ctx;
     const stepDur = 60 / (s.bpm * this.tempo) / 4;
+    // After a stall (a track being built, a throttled tab), skip the steps that were missed rather than play
+    // them all at once.
+    if (this.nextTime < c.currentTime) {
+      const missed = Math.ceil((c.currentTime - this.nextTime) / stepDur);
+      this.step += missed;
+      this.nextTime += missed * stepDur;
+    }
     while (this.nextTime < c.currentTime + 0.15) {
       const total = this.bars * 16;
       const i = this.step % total;

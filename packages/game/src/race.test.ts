@@ -182,3 +182,29 @@ describe('driving', () => {
     expect(flew).toBeGreaterThan(0.4);
   });
 });
+
+describe('falls', () => {
+  // A fall puts the kart back where it went off; its distance has to go back with it, or laps, the finish and
+  // places all count from where it fell.
+  it('never counts a lap or the finish before the line, however often karts fall', () => {
+    const wrap = (d: number, L: number) => {
+      d = ((d % L) + L) % L;
+      return d > L / 2 ? d - L : d;
+    };
+    let falls = 0;
+    for (const seed of [2, 3]) {
+      const track = getTrack('bath');
+      const race = new Race({ track, racers: cpus(), laps: 3, cc: 150, items: 'normal', difficulty: 'hard', seed });
+      while (!race.over && race.time < 400) {
+        race.step([]);
+        for (const e of race.events) {
+          if (e.t === 'respawn') falls++;
+          if (e.t === 'lap' || e.t === 'finish') expect(wrap(race.karts[e.k].s, track.length), `${e.t} of kart ${e.k}`).toBeGreaterThan(-3);
+        }
+        race.events = [];
+        for (const k of race.karts) expect(Math.abs(wrap(k.dist - k.s, track.length))).toBeLessThan(15);
+      }
+    }
+    expect(falls).toBeGreaterThan(0);
+  });
+});

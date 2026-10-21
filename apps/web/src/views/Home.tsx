@@ -73,9 +73,14 @@ export function Home() {
           </>
         )}
       </div>
-      <a className="home__link" href="/records" onClick={(e) => (e.preventDefault(), go('/records'))}>
-        Hall of Fame
-      </a>
+      <nav className="home__links">
+        <a className="home__link" href="/records" onClick={(e) => (e.preventDefault(), go('/records'))}>
+          Hall of Fame
+        </a>
+        <a className="home__link home__link--quiet" href="/settings" onClick={(e) => (e.preventDefault(), go('/settings'))}>
+          Settings
+        </a>
+      </nav>
     </main>
   );
 }

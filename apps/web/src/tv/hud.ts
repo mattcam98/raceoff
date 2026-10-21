@@ -69,6 +69,8 @@ export class Hud {
   private map: HTMLCanvasElement;
   private mapCtx: CanvasRenderingContext2D;
   private mapPath: Path2D | null = null;
+  /** The track and start line, drawn once per track and size; each frame only adds the karts. */
+  private mapBg: HTMLCanvasElement | null = null;
   private mapFit = { s: 1, ox: 0, oy: 0 };
   private ticker: HTMLElement;
   private tickerRows: { row: HTMLElement; name: Cell; pos: Cell; flag: Flag }[] = [];
@@ -207,6 +209,7 @@ export class Hud {
       if (p.closed) path.closePath();
     }
     this.mapPath = path;
+    this.mapBg = null;
   }
 
   private drawMap() {
@@ -215,25 +218,35 @@ export class Hud {
     const g = this.mapCtx;
     const dpr = this.map.width / parseFloat(this.map.style.width || '1');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const size = this.map.width / dpr;
-    g.clearRect(0, 0, size, size);
-    g.lineJoin = 'round';
-    g.lineCap = 'round';
-    g.strokeStyle = 'rgba(15, 12, 40, 0.75)';
-    g.lineWidth = 11;
-    g.stroke(this.mapPath);
-    g.strokeStyle = '#f4f2ff';
-    g.lineWidth = 5;
-    g.stroke(this.mapPath);
-    // Start line.
-    const st = race.track.pointAt(0, 0);
     const { s, ox, oy } = this.mapFit;
-    g.strokeStyle = '#1b1740';
-    g.lineWidth = 3;
-    g.beginPath();
-    g.moveTo((st.x - rightX(st.h) * 9) * s + ox, (st.z - rightZ(st.h) * 9) * s + oy);
-    g.lineTo((st.x + rightX(st.h) * 9) * s + ox, (st.z + rightZ(st.h) * 9) * s + oy);
-    g.stroke();
+    if (!this.mapBg || this.mapBg.width !== this.map.width || this.mapBg.height !== this.map.height) {
+      const bg = document.createElement('canvas');
+      bg.width = this.map.width;
+      bg.height = this.map.height;
+      const b = bg.getContext('2d')!;
+      b.setTransform(dpr, 0, 0, dpr, 0, 0);
+      b.lineJoin = 'round';
+      b.lineCap = 'round';
+      b.strokeStyle = 'rgba(15, 12, 40, 0.75)';
+      b.lineWidth = 11;
+      b.stroke(this.mapPath);
+      b.strokeStyle = '#f4f2ff';
+      b.lineWidth = 5;
+      b.stroke(this.mapPath);
+      // Start line.
+      const st = race.track.pointAt(0, 0);
+      b.strokeStyle = '#1b1740';
+      b.lineWidth = 3;
+      b.beginPath();
+      b.moveTo((st.x - rightX(st.h) * 9) * s + ox, (st.z - rightZ(st.h) * 9) * s + oy);
+      b.lineTo((st.x + rightX(st.h) * 9) * s + ox, (st.z + rightZ(st.h) * 9) * s + oy);
+      b.stroke();
+      this.mapBg = bg;
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, this.map.width, this.map.height);
+    g.drawImage(this.mapBg, 0, 0);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Computers first, humans on top.
     const order = [...race.karts].sort((a, b) => Number(!a.cpu) - Number(!b.cpu) || b.place - a.place);
     for (const k of order) {

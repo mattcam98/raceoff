@@ -6,7 +6,7 @@
  */
 import * as THREE from 'three';
 import { hazardAt, rightX, rightZ, SURF, type HazardState, type Track, type TrackPath } from '@raceoff/game';
-import { at, bake, ball, box, cone, cyl, decal, group, mat, slab } from './kit';
+import { at, bake, ball, box, cone, cyl, decal, disposeTree, group, mat, slab } from './kit';
 import { buildProp } from './props';
 import { tex } from './textures';
 import { themeFor, type Theme } from './themes';
@@ -500,7 +500,9 @@ export function buildWorld(track: Track): World {
 
   // The floor the track sits on.
   const f = track.def.floor;
-  const groundMat = theme.ground() as THREE.MeshLambertMaterial;
+  // A copy: the theme's material is cached and used elsewhere (a rough road of the same stuff), and the
+  // floor's texture repeat must not reach those.
+  const groundMat = (theme.ground() as THREE.MeshLambertMaterial).clone();
   if (groundMat.map) {
     groundMat.map = groundMat.map.clone();
     groundMat.map.needsUpdate = true;
@@ -601,10 +603,7 @@ export function buildWorld(track: Track): World {
     dispose() {
       if (disposed) return;
       disposed = true;
-      group.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (m.isMesh) m.geometry.dispose();
-      });
+      disposeTree(group);
       padTex.dispose();
     },
   };

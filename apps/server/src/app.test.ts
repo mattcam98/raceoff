@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import type { ClientToServerEvents, RecordsView, RelayedInput, RoomView, ServerToClientEvents } from '@raceoff/shared';
+import type { AdminView, ClientToServerEvents, RecordsView, RelayedInput, RoomView, ServerToClientEvents } from '@raceoff/shared';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp, type App } from './app';
@@ -15,7 +15,8 @@ const sockets: Client[] = [];
 beforeAll(async () => {
   setLogLevel('error');
   // Behind a "proxy", so each test can arrive from its own address and stay under the per-address limits.
-  app = await createApp(loadConfig({ DATA_DIR: '', LOG_LEVEL: 'error', TRUST_PROXY: '1' } as NodeJS.ProcessEnv));
+  app = await createApp(loadConfig({ DATA_DIR: '', LOG_LEVEL: 'error' } as NodeJS.ProcessEnv));
+  app.admin.settings = { ...app.admin.settings, trustProxy: 1 };
   await new Promise<void>((r) => app.server.listen(0, r));
   base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
 });
@@ -206,5 +207,70 @@ describe('restarts', () => {
       await second.a.close();
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('settings', () => {
+  let ip = 1;
+  const call = async <T,>(method: string, path: string, body?: unknown, token?: string) => {
+    const headers: Record<string, string> = { 'content-type': 'application/json', 'x-forwarded-for': `10.9.0.${ip++}` };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    return { status: res.status, body: (await res.json()) as T };
+  };
+
+  it('needs the setup code from the log before a first password can be set', async () => {
+    expect((await call<{ setup: boolean }>('GET', '/api/admin/status')).body.setup).toBe(true);
+    expect((await call('GET', '/api/admin')).status).toBe(401);
+    expect((await call('POST', '/api/admin/setup', { code: 'BBBB-BBBB', password: 'long enough' })).status).toBe(401);
+    expect((await call('POST', '/api/admin/setup', { code: app.admin.setupCode, password: 'short' })).status).toBe(400);
+    const ok = await call<{ token: string }>('POST', '/api/admin/setup', { code: app.admin.setupCode!.toLowerCase(), password: 'long enough' });
+    expect(ok.status).toBe(200);
+    expect(app.admin.setupCode).toBeNull();
+    expect((await call('POST', '/api/admin/setup', { code: 'BBBB-BBBB', password: 'long enough' })).status).toBe(409);
+    expect((await call<{ setup: boolean }>('GET', '/api/admin/status')).body.setup).toBe(false);
+  });
+
+  it('signs in, applies settings at once and refuses bad ones', async () => {
+    expect((await call('POST', '/api/admin/login', { password: 'wrong one' })).status).toBe(401);
+    const { body } = await call<{ token: string }>('POST', '/api/admin/login', { password: 'long enough' });
+    const view = await call<AdminView>('GET', '/api/admin', undefined, body.token);
+    expect(view.status).toBe(200);
+    const patch = { ...view.body.settings, publicUrl: 'https://Race.Example.com/', trustProxy: 1, roomDefaults: { ...view.body.settings.roomDefaults, laps: 5 } };
+    const saved = await call<AdminView>('PUT', '/api/admin/settings', patch, body.token);
+    expect(saved.body.settings.publicUrl).toBe('https://race.example.com');
+    expect(((await (await fetch(`${base}/api/info`)).json()) as { publicUrl: string }).publicUrl).toBe('https://race.example.com');
+    expect((await call('PUT', '/api/admin/settings', { ...patch, publicUrl: 'race.example.com/join' }, body.token)).status).toBe(400);
+    // New rooms start on the saved defaults.
+    const r = await room();
+    expect(app.rooms.get(r.code)!.view().settings.laps).toBe(5);
+    await call('PUT', '/api/admin/settings', { ...patch, publicUrl: null, roomDefaults: view.body.settings.roomDefaults }, body.token);
+  });
+
+  it('changes the password only with the current one, signing other devices out', async () => {
+    const a = (await call<{ token: string }>('POST', '/api/admin/login', { password: 'long enough' })).body.token;
+    const b = (await call<{ token: string }>('POST', '/api/admin/login', { password: 'long enough' })).body.token;
+    expect((await call('POST', '/api/admin/password', { current: 'nope nope', next: 'brand new pass' }, a)).status).toBe(401);
+    const fresh = await call<{ token: string }>('POST', '/api/admin/password', { current: 'long enough', next: 'brand new pass' }, a);
+    expect(fresh.status).toBe(200);
+    expect((await call('GET', '/api/admin', undefined, a)).status).toBe(401);
+    expect((await call('GET', '/api/admin', undefined, b)).status).toBe(401);
+    expect((await call('GET', '/api/admin', undefined, fresh.body.token)).status).toBe(200);
+  });
+
+  it('closes rooms and edits the Hall of Fame', async () => {
+    const token = (await call<{ token: string }>('POST', '/api/admin/login', { password: 'brand new pass' })).body.token;
+    const r = await room();
+    const bye = new Promise<string>((resolve) => r.tv.once('bye', resolve));
+    const closed = await call<AdminView>('DELETE', `/api/admin/rooms/${r.code}`, undefined, token);
+    expect(closed.status).toBe(200);
+    expect(await bye).toBe('closed');
+    expect(closed.body.rooms.some((x) => x.code === r.code)).toBe(false);
+    expect((await call('POST', '/api/admin/records/remove', { name: 'ACE' }, token)).status).toBe(200);
+    const records = (await (await fetch(`${base}/api/records`)).json()) as RecordsView;
+    expect(records.players.some((p) => p.name === 'Ace')).toBe(false);
+    expect((await call('POST', '/api/admin/records/remove', { name: 'Ace' }, token)).status).toBe(404);
+    const view = await call<AdminView>('GET', '/api/admin', undefined, token);
+    expect(view.body.audit.map((e) => e.action)).toEqual(expect.arrayContaining(['setup', 'login.failed', 'password.changed', 'room.closed', 'records.removed']));
   });
 });

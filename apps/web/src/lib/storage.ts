@@ -1,13 +1,22 @@
-/** Small wrappers around browser storage that never throw (private mode, blocked storage). */
+/**
+ * Small wrappers around browser storage that never throw (private mode, blocked storage). Values are also
+ * kept in memory, so with storage blocked the app still works until the page is reloaded.
+ */
+
+const memory = new Map<string, string>();
 
 function get(store: () => Storage, key: string): string | null {
   try {
-    return store().getItem(key);
+    const value = store().getItem(key);
+    if (value !== null) return value;
   } catch {
-    return null;
+    /* storage unavailable: fall back to memory */
   }
+  return memory.get(key) ?? null;
 }
 function put(store: () => Storage, key: string, value: string | null) {
+  if (value === null) memory.delete(key);
+  else memory.set(key, value);
   try {
     if (value === null) store().removeItem(key);
     else store().setItem(key, value);
@@ -41,6 +50,12 @@ export const seat = {
     }
   },
   set: (code: string, s: Seat | null) => put(local, `raceoff.seat.${code}`, s ? JSON.stringify(s) : null),
+};
+
+/** This browser's sign-in to the settings page. */
+export const adminToken = {
+  get: () => get(local, 'raceoff.admin'),
+  set: (token: string | null) => put(local, 'raceoff.admin', token),
 };
 
 export const prefs = {

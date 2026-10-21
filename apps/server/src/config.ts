@@ -1,13 +1,13 @@
+/**
+ * What the server needs before it can read its own settings. Everything else (the address phones open,
+ * reverse proxies, room expiry and so on) is changed in the app, on the settings page.
+ */
 import { z } from 'zod';
 
 const ConfigSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3300),
-  /** Where records are kept. */
+  /** Where records, rooms and the server settings are kept. Empty: in memory only. */
   DATA_DIR: z.string().default('./data'),
-  /** The address phones should open, e.g. https://race.example.com. Empty: whatever the TV was opened with. */
-  PUBLIC_URL: z.string().url().or(z.literal('')).default(''),
-  /** Reverse proxies in front of the server: 0 if exposed directly. */
-  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   /** Where the built web app is. */
   WEB_DIR: z.string().default(''),

@@ -17,11 +17,20 @@ interface OrientationEventCtor {
   requestPermission?: () => Promise<'granted' | 'denied'>;
 }
 
+/** iPhones ask permission for motion on every page load, and only from a tap. */
+const motionNeedsTap = () =>
+  typeof (window as unknown as { DeviceMotionEvent?: OrientationEventCtor }).DeviceMotionEvent?.requestPermission === 'function';
+
 const SEND_MS = 33;
 const HEARTBEAT_MS = 120;
 
 export function Controller({ link, me, game, vip }: { link: PhoneLink; me: PlayerInfo; game: GameStatus; vip: boolean }) {
-  const [mode, setMode] = useState<SteerMode>(() => prefs.get('steer', 'touch'));
+  // Tilt saved on a secure page cannot work on a plain-http one: start on drag there.
+  const [mode, setMode] = useState<SteerMode>(() => {
+    const saved = prefs.get<SteerMode>('steer', 'touch');
+    return saved === 'tilt' && !window.isSecureContext ? 'touch' : saved;
+  });
+  const [tiltAsleep, setTiltAsleep] = useState(() => mode === 'tilt' && motionNeedsTap());
   const [autoGas, setAutoGas] = useState<boolean>(() => prefs.get('autoGas', true));
   const [sens, setSens] = useState<number>(() => prefs.get('sens', 1));
   const [invertTilt, setInvertTilt] = useState<boolean>(() => prefs.get('invertTilt', false));
@@ -47,6 +56,11 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     };
   }, [link]);
 
+  // A new race starts with a clean dashboard, not the last race's place and item.
+  useEffect(() => {
+    if (game.phase === 'intro') setHud(null);
+  }, [game.phase, game.raceIndex]);
+
   // Keep the screen awake while driving.
   useEffect(() => {
     let lock: { release: () => Promise<void> } | null = null;
@@ -66,9 +80,15 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     let last = '';
     let lastAt = 0;
     const t = window.setInterval(() => {
+      // In the background (another app, the screen off) the browser still runs this about once a second: send
+      // hands-off, so the kart coasts instead of driving on with the last steer and the gas held.
+      if (document.hidden) {
+        steer.current = 0;
+        buttons.current = 0;
+      }
       const s = Math.round(Math.max(-1, Math.min(1, steer.current)) * 100);
       let b = buttons.current;
-      if (autoGas && !(b & BTN.brake)) b |= BTN.gas;
+      if (autoGas && !document.hidden && !(b & BTN.brake)) b |= BTN.gas;
       const key = `${s}|${b}|${items.current}`;
       const now = performance.now();
       if (key !== last || now - lastAt > HEARTBEAT_MS) {
@@ -160,23 +180,29 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     if (on) buzz('tick');
   };
 
-  const chooseMode = async (m: SteerMode) => {
+  /** Switch steering. False if tilt could not be turned on (the reason is shown in the controls sheet). */
+  const chooseMode = async (m: SteerMode): Promise<boolean> => {
     setTiltError(null);
     if (m === 'tilt') {
       const Ctor = (window as unknown as { DeviceMotionEvent?: OrientationEventCtor }).DeviceMotionEvent;
-      if (!Ctor) return setTiltError('This phone has no tilt sensor.');
+      const fail = (why: string) => (setTiltError(why), false);
+      if (!Ctor) return fail('This phone has no tilt sensor.');
+      // Browsers only report motion to secure pages: on plain http tilt would silently do nothing.
+      if (!window.isSecureContext) return fail('Tilt needs a secure (https) address. Use Drag or Buttons here.');
       if (typeof Ctor.requestPermission === 'function') {
         try {
           const res = await Ctor.requestPermission();
-          if (res !== 'granted') return setTiltError('Tilt was not allowed. Check your browser settings.');
+          if (res !== 'granted') return fail('Tilt was not allowed. Check your browser settings.');
         } catch {
-          return setTiltError('Tilt needs a secure (https) address on this phone.');
+          return fail('Tilt needs a secure (https) address on this phone.');
         }
       }
     }
     steer.current = 0;
     setMode(m);
+    setTiltAsleep(false);
     prefs.set('steer', m);
+    return true;
   };
 
   const charge = hud?.charge ?? 0;
@@ -241,7 +267,18 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
                 <circle cx="50" cy="52" r="9" fill="currentColor" />
               </svg>
             </div>
-            <p>{mode === 'tilt' ? 'Tilt to steer' : 'Drag left and right to steer'}</p>
+            {tiltAsleep ? (
+              <button
+                className="btn btn--go"
+                // Kept from the steering zone, which would capture the pointer and swallow the click.
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => void chooseMode('tilt').then((ok) => ok || void chooseMode('touch'))}
+              >
+                Tap to turn on tilt
+              </button>
+            ) : (
+              <p>{mode === 'tilt' ? 'Tilt to steer' : 'Drag left and right to steer'}</p>
+            )}
           </div>
         )}
       </section>
@@ -317,7 +354,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         <div className="sheet" onClick={() => setMenu(false)}>
           <div className="sheet__card" onClick={(e) => e.stopPropagation()}>
             <h2>Controls</h2>
-            <label className="field">
+            <div className="field" role="group" aria-label="Steering">
               <span>Steering</span>
               <div className="seg">
                 {(['touch', 'tilt', 'buttons'] as SteerMode[]).map((m) => (
@@ -326,7 +363,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
                   </button>
                 ))}
               </div>
-            </label>
+            </div>
             {tiltError && <p className="notice">{tiltError}</p>}
             {mode === 'tilt' && (
               <div className="tilt-row">

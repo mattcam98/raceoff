@@ -5,11 +5,12 @@
  * phone) go to plain callbacks so they never cause a re-render on their own.
  */
 import {
-  IDLE_STATUS, type ClientToServerEvents, type CreateRoomResponse, type GameStatus, type HapticKind, type Hud, type JoinResponse,
+  IDLE_STATUS, type AdminStatus, type AdminView, type ClientToServerEvents, type ServerSettings, type CreateRoomResponse, type GameStatus, type HapticKind, type Hud, type JoinResponse,
   type MenuCommand, type RelayedInput, type RoomView, type ServerToClientEvents,
 } from '@raceoff/shared';
-import { useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { adminToken } from './storage';
 
 export type LinkStatus = 'connecting' | 'online' | 'reconnecting' | 'rejected' | 'ended';
 
@@ -26,6 +27,10 @@ abstract class Link {
   protected socket: AppSocket;
   private snap: LinkSnapshot = { status: 'connecting', reason: null, room: null, game: IDLE_STATUS };
   private listeners = new Set<() => void>();
+  private retry: number | undefined;
+  private closed = false;
+  /** Every time the socket (re)connects: after a network blip or a server restart. */
+  onConnect: () => void = () => {};
 
   constructor(auth: Record<string, string>) {
     this.socket = io({
@@ -37,7 +42,10 @@ abstract class Link {
       timeout: 8000,
     });
     const s = this.socket;
-    s.on('connect', () => this.set({ status: 'online', reason: null }));
+    s.on('connect', () => {
+      this.set({ status: 'online', reason: null });
+      this.onConnect();
+    });
     s.on('disconnect', (reason) => {
       if (this.snap.status === 'ended') return;
       if (reason === 'io server disconnect') s.connect();
@@ -47,10 +55,17 @@ abstract class Link {
       const fatal = ['no_room', 'unauthorized', 'bad_handshake'].includes(err.message);
       this.set(fatal ? { status: 'rejected', reason: err.message } : { status: this.snap.room ? 'reconnecting' : 'connecting' });
       if (fatal) s.disconnect();
-      else if (!s.active) window.setTimeout(() => s.connect(), 1500);
+      else if (!s.active) {
+        // Turned away by the server's middleware (rate limited): socket.io will not retry on its own.
+        window.clearTimeout(this.retry);
+        this.retry = window.setTimeout(() => !this.closed && s.connect(), 1500);
+      }
     });
     s.on('room', (room) => this.set({ room }));
-    s.on('status', (game) => this.set({ game }));
+    s.on('status', (game) => {
+      this.statusChanged(game);
+      this.set({ game });
+    });
     s.on('bye', (reason) => {
       this.set({ status: 'ended', reason });
       s.disconnect();
@@ -58,13 +73,19 @@ abstract class Link {
   }
 
   open() {
+    this.closed = false;
     this.socket.connect();
   }
 
   /** Hang up. The link can be opened again (React may mount a component twice in development). */
   close() {
+    this.closed = true;
+    window.clearTimeout(this.retry);
     this.socket.disconnect();
   }
+
+  /** Called with each new race status before anything renders it. */
+  protected statusChanged(_game: GameStatus) {}
 
   protected set(patch: Partial<LinkSnapshot>) {
     this.snap = { ...this.snap, ...patch };
@@ -93,8 +114,11 @@ export class TvLink extends Link {
 
   settings = (patch: Parameters<ClientToServerEvents['tv:settings']>[0]) => this.socket.emit('tv:settings', patch);
   status = (status: GameStatus) => this.socket.emit('tv:status', status);
-  huds = (huds: Record<string, Hud>) => this.socket.volatile.emit('tv:hud', huds);
-  haptic = (pid: string, kind: HapticKind) => this.socket.volatile.emit('tv:haptic', { pid, kind });
+  // Not volatile: socket.io drops a volatile packet while the last one is still being written, so a second one in
+  // the same frame (the countdown buzz for every phone, a dashboard after a buzz) would be lost. While offline,
+  // nothing is queued: the director sends full dashboards again on reconnecting.
+  huds = (huds: Record<string, Hud>) => this.socket.connected && this.socket.emit('tv:hud', huds);
+  haptic = (pid: string, kind: HapticKind) => this.socket.connected && this.socket.emit('tv:haptic', { pid, kind });
   kick = (pid: string) => this.socket.emit('tv:kick', pid);
   pick = (pid: string, character: string, body: string) => this.socket.emit('tv:pick', { pid, character, body });
   ready = (pid: string, ready: boolean) => this.socket.emit('tv:ready', { pid, ready });
@@ -126,6 +150,11 @@ export class PhoneLink extends Link {
     this.socket.on('haptic', (k) => this.onHaptic(k));
   }
 
+  protected override statusChanged(game: GameStatus) {
+    // A new race (or the lobby): last race's dashboard no longer applies.
+    if (game.phase === 'intro' || game.phase === 'lobby') this.latestHud = null;
+  }
+
   input = (s: number, b: number, i: number) => {
     if (this.socket.connected) this.socket.volatile.emit('p:input', { s, b, i });
   };
@@ -143,18 +172,15 @@ export function useLink<L extends Link>(link: L | null): LinkSnapshot | null {
     link.open();
     return () => link.close();
   }, [link]);
-  const empty = useSyncExternalStore(
-    (fn) => link?.subscribe(fn) ?? (() => {}),
-    () => link?.getSnapshot() ?? null,
-  );
-  return empty;
+  const subscribe = useCallback((fn: () => void) => link?.subscribe(fn) ?? (() => {}), [link]);
+  return useSyncExternalStore(subscribe, () => link?.getSnapshot() ?? null);
 }
 
 // ---------------------------------------------------------------- HTTP
 
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw Object.assign(new Error((body as { error?: string }).error ?? `Request failed (${res.status})`), { status: res.status });
   return body as T;
 }
 
@@ -167,4 +193,35 @@ export const api = {
     ),
   info: () => fetch('/api/info').then((r) => json<{ publicUrl: string | null; lan: string[]; version: string }>(r)),
   records: () => fetch('/api/records').then((r) => json<import('@raceoff/shared').RecordsView>(r)),
+};
+
+/** The settings page's calls. Signed-in calls carry this browser's session; a 401 means it has ended. */
+export class SignedOut extends Error {}
+
+async function adminCall<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const token = adminToken.get();
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(`/api/admin${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (res.status === 401 && token && !['/login', '/setup', '/password'].includes(path)) {
+    adminToken.set(null);
+    throw new SignedOut('Signed out');
+  }
+  return json<T>(res);
+}
+const signIn = (p: Promise<{ token: string }>) => p.then(({ token }) => void adminToken.set(token));
+
+export const adminApi = {
+  status: () => adminCall<AdminStatus>('GET', '/status'),
+  setup: (code: string, password: string) => signIn(adminCall('POST', '/setup', { code, password })),
+  login: (password: string) => signIn(adminCall('POST', '/login', { password })),
+  logout: () => adminCall('POST', '/logout').finally(() => adminToken.set(null)),
+  view: () => adminCall<AdminView>('GET', ''),
+  save: (settings: ServerSettings) => adminCall<AdminView>('PUT', '/settings', settings),
+  password: (current: string, next: string) => signIn(adminCall('POST', '/password', { current, next })),
+  revokeOthers: () => adminCall<AdminView>('POST', '/sessions/revoke'),
+  closeRoom: (code: string) => adminCall<AdminView>('DELETE', `/rooms/${code}`),
+  resetRecords: () => adminCall<AdminView>('POST', '/records/reset'),
+  removeRecord: (name: string) => adminCall<AdminView>('POST', '/records/remove', { name }),
 };

@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import { BLAST_RADIUS, OIL_RADIUS, type Race } from '@raceoff/game';
-import { at, ball, box, cone, cyl, group, mat } from './kit';
+import { at, ball, box, cone, cyl, disposeTree, group, mat } from './kit';
 import { tex } from './textures';
 
 const tmpM = new THREE.Matrix4();
@@ -99,12 +99,16 @@ class Pool {
     for (const [id, p] of this.live) {
       if (p.seen) continue;
       this.parent.remove(p.obj);
+      disposeTree(p.obj);
       this.live.delete(id);
     }
   }
 
   clear() {
-    for (const p of this.live.values()) this.parent.remove(p.obj);
+    for (const p of this.live.values()) {
+      this.parent.remove(p.obj);
+      disposeTree(p.obj);
+    }
     this.live.clear();
   }
 }
@@ -232,5 +236,7 @@ export class ItemsView {
 
   dispose() {
     for (const pool of [this.balls, this.bees, this.bombs, this.planes, this.oils, this.blasts]) pool.clear();
+    // The item boxes and orbiting balls, which are made for each race.
+    disposeTree(this.group);
   }
 }

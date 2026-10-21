@@ -7,7 +7,7 @@
  *   body   drift yaw, spins, squash and bounce
  */
 import * as THREE from 'three';
-import { at, bake, ball, box, cone, cyl, mat, scaled, slab, torus } from './kit';
+import { at, bake, ball, box, cone, cyl, mat, scaled, shareResource, slab, torus } from './kit';
 import { tex } from './textures';
 
 export interface KartRig {
@@ -224,7 +224,7 @@ function truck(main: THREE.Material, trim: THREE.Material): BodyParts {
 
 // ---------------------------------------------------------------- shield
 
-const shieldMaterial = new THREE.ShaderMaterial({
+const shieldMaterial = shareResource(new THREE.ShaderMaterial({
   transparent: true,
   depthWrite: false,
   blending: THREE.AdditiveBlending,
@@ -249,12 +249,13 @@ const shieldMaterial = new THREE.ShaderMaterial({
       vec3 col = mix(uColor, vec3(1.0, 0.6, 1.0), swirl * 0.5);
       gl_FragColor = vec4(col * (rim * 1.4 + 0.06), 1.0);
     }`,
-});
+}));
 export const shieldUniforms = shieldMaterial.uniforms;
 
-const shadowMaterial = new THREE.MeshBasicMaterial({ map: tex.blob(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
-const shadowGeometry = new THREE.PlaneGeometry(3.4, 4.2).rotateX(-Math.PI / 2);
-const ringGeometry = new THREE.RingGeometry(1.55, 1.95, 32).rotateX(-Math.PI / 2);
+// Shared by every kart, so never freed with one.
+const shadowMaterial = shareResource(new THREE.MeshBasicMaterial({ map: tex.blob(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+const shadowGeometry = shareResource(new THREE.PlaneGeometry(3.4, 4.2).rotateX(-Math.PI / 2));
+const ringGeometry = shareResource(new THREE.RingGeometry(1.55, 1.95, 32).rotateX(-Math.PI / 2));
 
 function rocketBooster() {
   const g = new THREE.Group();

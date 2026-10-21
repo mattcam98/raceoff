@@ -385,13 +385,14 @@ export class Race {
       k.y = to.y + 7 * (k.respawnT / half);
     }
     if (k.respawnT === 0) {
-      k.place3(to.x, to.y, to.z, to.h);
-      k.s = to.s;
-      // Distance is not refunded for the part of the lap thrown away, so a fall costs time, not laps.
+      // Back to where it is put down: the stretch it fell from has to be driven again, so a fall costs time,
+      // and its distance (the ranking, laps and the finish) must match where it now is.
       let d = to.s - k.s;
       if (d > this.track.length / 2) d -= this.track.length;
       if (d < -this.track.length / 2) d += this.track.length;
       k.dist += d;
+      k.place3(to.x, to.y, to.z, to.h);
+      k.s = to.s;
       k.invuln = 2;
       k.lostT = 0;
       this.events.push({ t: 'respawn', k: k.index });

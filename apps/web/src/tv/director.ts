@@ -133,9 +133,15 @@ export class Director {
     this.startAttract();
     // A TV that reloads mid-race starts again in the lobby: tell the phones so.
     this.publish();
+    // After a blip or a server restart the server may hold an old status, and phones an old dashboard.
+    this.link.onConnect = () => {
+      this.hudSent.clear();
+      this.publish();
+    };
   }
 
   end() {
+    this.link.onConnect = () => {};
     this.running = false;
     cancelAnimationFrame(this.raf);
     this.keyboard.detach();
@@ -147,6 +153,10 @@ export class Director {
     const prev = this.room;
     this.room = room;
     this.settings = room.settings;
+    // A phone that has just come back needs its whole dashboard, not only what changes from now on.
+    for (const p of room.players) {
+      if (p.connected && !prev?.players.find((q) => q.id === p.id)?.connected) this.hudSent.delete(p.id);
+    }
     this.keyboard.setPlayers(room.players.filter((p) => p.local).map((p) => p.id));
     // New arrivals get a little pop.
     if (prev && room.players.length > prev.players.length && this.state.phase === 'lobby') play('join');

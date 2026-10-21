@@ -4,6 +4,7 @@
  * is made once and cached.
  */
 import * as THREE from 'three';
+import { shareResource } from './kit';
 
 const cache = new Map<string, THREE.Texture>();
 
@@ -27,7 +28,7 @@ function finish(c: HTMLCanvasElement, repeat = true, srgb = true): THREE.CanvasT
 function cached(key: string, make: () => THREE.Texture): THREE.Texture {
   let t = cache.get(key);
   if (!t) {
-    t = make();
+    t = shareResource(make());
     cache.set(key, t);
   }
   return t;

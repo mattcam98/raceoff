@@ -7,9 +7,9 @@
  * only ever speak for its own player, and only the VIP can change settings.
  */
 import {
-  BodyIdSchema, CharacterIdSchema, CHARACTERS, DEFAULT_SETTINGS, IDLE_STATUS, InputSchema, MAX_PLAYERS, MenuCommandSchema,
+  BodyIdSchema, CharacterIdSchema, CHARACTERS, IDLE_STATUS, InputSchema, MAX_PLAYERS, MenuCommandSchema,
   NameSchema, PickSchema, RaceReportSchema, RoomSettingsPatchSchema, RoomSettingsSchema,
-  type ClientToServerEvents, type GameStatus, type HapticKind, type Hud, type PlayerInfo, type RoomSettings, type RoomView,
+  type ClientToServerEvents, type GameStatus, type HapticKind, type Hud, type LiveRoomView, type PlayerInfo, type RoomSettings, type RoomView,
   type ServerToClientEvents,
 } from '@raceoff/shared';
 import type { Server, Socket } from 'socket.io';
@@ -40,6 +40,7 @@ export interface RoomSnapshot {
   status: GameStatus;
   seats: { info: PlayerInfo; tokenHash: string; joinedAt: number }[];
   localCount: number;
+  createdAt?: number;
   updatedAt: number;
 }
 
@@ -48,10 +49,11 @@ const HAPTICS: HapticKind[] = ['hit', 'item', 'boost', 'bump', 'lap', 'finish', 
 export class Room {
   private seats = new Map<string, Seat>();
   private tv: AppSocket | null = null;
-  private settings: RoomSettings = { ...DEFAULT_SETTINGS };
+  private settings: RoomSettings;
   private status: GameStatus = IDLE_STATUS;
   private pending = false;
   private localCount = 0;
+  createdAt = Date.now();
   updatedAt = Date.now();
   /** When the TV was last seen, for expiry. */
   tvSeenAt = Date.now();
@@ -61,7 +63,11 @@ export class Room {
     readonly code: string,
     private keyHash: string,
     private records: Records,
-  ) {}
+    /** What the lobby starts on: the server's defaults for new rooms. */
+    settings: RoomSettings,
+  ) {
+    this.settings = { ...settings };
+  }
 
   isTv(key: string) {
     return tokenMatches(key, this.keyHash);
@@ -85,22 +91,31 @@ export class Room {
 
   snapshot(): RoomSnapshot {
     return {
-      code: this.code, keyHash: this.keyHash, settings: this.settings, status: this.status, localCount: this.localCount, updatedAt: this.updatedAt,
+      code: this.code, keyHash: this.keyHash, settings: this.settings, status: this.status, localCount: this.localCount,
+      createdAt: this.createdAt, updatedAt: this.updatedAt,
       seats: [...this.seats.values()].map((s) => ({ info: s.info, tokenHash: s.tokenHash, joinedAt: s.joinedAt })),
     };
   }
 
   /** A room brought back after a restart. Phones and the TV reconnect on their own with what they kept. */
-  static restore(io: AppServer, snap: RoomSnapshot, records: Records): Room {
-    const room = new Room(io, snap.code, snap.keyHash, records);
+  static restore(io: AppServer, snap: RoomSnapshot, records: Records, defaults: RoomSettings): Room {
     const settings = RoomSettingsSchema.safeParse(snap.settings);
-    if (settings.success) room.settings = settings.data;
+    const room = new Room(io, snap.code, snap.keyHash, records, settings.success ? settings.data : defaults);
     room.status = { ...IDLE_STATUS, ...snap.status };
     room.localCount = snap.localCount;
+    room.createdAt = snap.createdAt ?? snap.updatedAt;
     room.updatedAt = snap.updatedAt;
     room.tvSeenAt = Date.now();
     for (const s of snap.seats) room.seats.set(s.info.id, { info: { ...s.info, connected: s.info.local }, tokenHash: s.tokenHash, socket: null, joinedAt: s.joinedAt });
     return room;
+  }
+
+  /** For the settings page's list of live rooms. */
+  summary(): LiveRoomView {
+    return {
+      code: this.code, tv: this.tvConnected, phase: this.status.phase, createdAt: this.createdAt, updatedAt: this.updatedAt,
+      players: [...this.seats.values()].sort((a, b) => a.info.slot - b.info.slot).map((s) => ({ name: s.info.name, connected: s.info.connected, local: s.info.local })),
+    };
   }
 
   private touch() {
@@ -220,7 +235,7 @@ export class Room {
     });
     socket.on('tv:haptic', (msg) => {
       if (!msg || !HAPTICS.includes(msg.kind)) return;
-      this.seats.get(msg.pid)?.socket?.volatile.emit('haptic', msg.kind);
+      this.seats.get(msg.pid)?.socket?.emit('haptic', msg.kind);
     });
     socket.on('tv:kick', (pid) => {
       if (typeof pid === 'string') this.remove(pid, 'kicked');
@@ -238,12 +253,14 @@ export class Room {
       const b = BodyIdSchema.safeParse(msg.body);
       if (c.success) seat.info.character = c.data;
       if (b.success) seat.info.body = b.data;
+      this.touch();
       this.broadcastRoom();
     });
     socket.on('tv:ready', (msg) => {
       const seat = msg && this.seats.get(msg.pid);
       if (!seat?.info.local) return;
       seat.info.ready = !!msg.ready;
+      this.touch();
       this.broadcastRoom();
     });
     socket.on('tv:report', (report, ack) => {
@@ -276,11 +293,13 @@ export class Room {
     this.touch();
     this.broadcastRoom();
 
-    // Inputs are the hot path: parsed, stamped with who sent them, and passed straight on.
+    // Inputs are the hot path: parsed, stamped with who sent them, and passed straight on. Not volatile: a
+    // volatile packet is dropped while the TV's socket is still writing the last one, which is exactly when
+    // two phones' inputs arrive together. They are tiny, so queueing one for a moment costs nothing.
     socket.on('p:input', (raw) => {
       const input = InputSchema.safeParse(raw);
       if (!input.success || !this.tv) return;
-      this.tv.volatile.emit('input', { ...input.data, pid: playerId });
+      this.tv.emit('input', { ...input.data, pid: playerId });
     });
     socket.on('p:pick', (raw) => {
       const pick = PickSchema.safeParse(raw);
@@ -299,6 +318,7 @@ export class Room {
       const name = NameSchema.safeParse(raw);
       if (!name.success) return;
       seat.info.name = this.uniqueName(name.data, playerId);
+      this.touch();
       this.broadcastRoom();
     });
     socket.on('p:settings', (patch) => {

@@ -18,6 +18,9 @@ records.
 docker compose up -d --build
 ```
 
+There is nothing to configure first: no `.env`, no environment variables.
+Everything is set from RaceOff's own **Settings** page (below).
+
 Open `http://<server>:3300` on the TV (a laptop plugged into one works well),
 press **Start a room**, then **Click for sound** and **Full screen** (or F).
 Players open the address shown in the lobby on their phones, or scan the QR
@@ -40,19 +43,47 @@ localhost).
 
 ### Settings
 
-All optional, as environment variables (or in `.env` for Compose, see
-`.env.example`):
+Open **Settings** from the home page (`/settings`). The first time, it asks for
+a one-time setup code, which proves the server is yours before anyone can set
+the password. The code is printed in the server's log on every start until a
+password is set:
 
-| Variable | Default | What it does |
+```sh
+docker logs raceoff 2>&1 | grep setup
+```
+
+After that the page is behind the password, and every change applies the moment
+it is saved, with no restart:
+
+| Setting | Default | What it does |
 |---|---|---|
-| `RACEOFF_PORT` | `3300` | Port published on the Docker host. |
-| `PUBLIC_URL` | empty | The address phones should open, e.g. `https://race.example.com`. Shown in the lobby and the QR code. Empty: the address the TV was opened with, or this machine's network address when the TV is on localhost. |
-| `TRUST_PROXY` | `0` | Reverse proxies in front of the app: `0` if exposed directly, `1` behind one. Rate limits are per client address. |
-| `DATA_DIR` | `/data` | Where the records file lives (a Docker volume). |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| Phones join at | wherever the TV is | The address in the lobby and its QR code, e.g. `https://race.example.com`. By default, the address the TV was opened with. |
+| Network | none | Reverse proxies in front of RaceOff: none, one (Nginx Proxy Manager, Caddy, Traefik), or Cloudflare in front of one. Rate limits are per phone, so this must match; the page says how your own request arrived. |
+| New rooms start with | Grand Prix, 100cc, 8 racers, 3 laps | The race setup a new lobby opens on. |
+| Rooms | close 30 min after the TV leaves | Also lists the rooms open now, with who is in them, and can close one. |
+| Hall of Fame | | Take a name off the board, or wipe it. |
+| Password and devices | | Change the password (signs every other device out), how long a sign-in lasts, and the devices signed in. |
+| Activity | | Sign-ins, failed attempts and changes. |
 
-Behind a reverse proxy, forward to port 3300 with WebSocket support enabled:
+Settings, records and open rooms are kept in `/data` (the `raceoff-data`
+volume): `admin.json` (settings, the password's scrypt hash, sign-ins),
+`records.json` and `rooms.json`.
+
+**Lost the password?** Run
+`docker compose exec raceoff node apps/server/dist/index.js reset-admin-password`,
+then `docker compose restart raceoff`, and set a new one with the setup code the
+restart prints.
+
+The port is set in `docker-compose.yml` (`3300:3300`); change the left number to
+publish it elsewhere.
+
+**Behind a reverse proxy**, forward to port 3300 with WebSocket support enabled:
 RaceOff uses WebSockets only, never long-polling, to keep steering latency low.
+Then set **Network** in Settings to match.
+
+Phones work over plain `http://` on the local network, but browsers only allow
+tilt steering and keeping the screen awake on a secure (`https://`) address.
+Serve RaceOff over HTTPS (a reverse proxy with a certificate) to have those.
 
 ## Playing
 

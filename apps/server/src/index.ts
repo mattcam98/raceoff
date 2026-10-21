@@ -1,3 +1,4 @@
+import { resetAdminPassword } from './admin';
 import { createApp } from './app';
 import { loadConfig, VERSION } from './config';
 import { lanAddresses, log, setLogLevel } from './util';
@@ -5,9 +6,22 @@ import { lanAddresses, log, setLogLevel } from './util';
 const config = loadConfig();
 setLogLevel(config.LOG_LEVEL);
 
+// Lost the settings password:
+//   docker compose exec raceoff node apps/server/dist/index.js reset-admin-password
+// then restart; the server prints a new setup code.
+if (process.argv[2] === 'reset-admin-password') {
+  if (!config.DATA_DIR) throw new Error('DATA_DIR is not set: there is no saved password to reset');
+  const done = await resetAdminPassword(config.DATA_DIR);
+  console.log(done
+    ? 'The settings password and every signed-in device have been removed. Restart RaceOff now; it will print a new setup code.'
+    : 'This server has no saved settings yet: nothing to reset.');
+  process.exit(0);
+}
+
 const app = await createApp(config);
 app.server.listen(config.PORT, () => {
-  log.info('RaceOff is listening', { port: config.PORT, version: VERSION, lan: lanAddresses().map((a) => `http://${a}:${config.PORT}`) });
+  const lan = lanAddresses().map((a) => `http://${a}:${config.PORT}`);
+  log.info('RaceOff is listening', { port: config.PORT, version: VERSION, publicUrl: app.admin.settings.publicUrl, lan });
 });
 
 let stopping = false;

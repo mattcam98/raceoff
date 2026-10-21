@@ -24,9 +24,10 @@ function Join({ code, onJoined }: { code: string; onJoined: (s: Seat) => void })
   const [error, setError] = useState<string | null>(null);
   const [exists, setExists] = useState<boolean | null>(null);
   useEffect(() => {
+    // Only a definite "no such room" says so; a network blip or a restarting server still shows the form.
     api.room(code).then(
       () => setExists(true),
-      () => setExists(false),
+      (err: Error & { status?: number }) => setExists(err.status !== 404),
     );
   }, [code]);
   const submit = async (e: React.FormEvent) => {
@@ -113,8 +114,11 @@ function Seated({ code, seat, onLost }: { code: string; seat: Seat; onLost: () =
           <button
             className="btn btn--go btn--big"
             onClick={() => {
+              // Taken over by another tab or phone: reconnecting with the same seat takes it back. Otherwise the
+              // seat is gone, so join afresh.
+              if (snap.reason === 'replaced') return window.location.reload();
               seatStore.set(code, null);
-              window.location.href = snap.reason === 'replaced' ? window.location.href : `/join/${code}`;
+              window.location.href = `/join/${code}`;
             }}
           >
             {snap.reason === 'replaced' ? 'Use this phone' : 'Join again'}
@@ -335,12 +339,13 @@ function VipSettings({ link, room }: { link: PhoneLink; room: RoomView }) {
   );
 }
 
+/** A captioned group of controls. Not a <label>: a label passes taps on its caption to the first button inside. */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="field">
+    <div className="field" role="group" aria-label={label}>
       <span>{label}</span>
       {children}
-    </label>
+    </div>
   );
 }
 

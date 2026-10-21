@@ -1,19 +1,16 @@
+# Nothing to configure here: RaceOff is set up from its own settings page, /settings.
+# On the first start it prints a one-time setup code in its log (docker logs raceoff).
 services:
   raceoff:
     build: .
     image: raceoff:local
     container_name: raceoff
     ports:
-      - "${RACEOFF_PORT:-3300}:3300"
+      - "3300:3300"
     environment:
-      TZ: ${TZ:-Europe/Malta}
-      # The address phones should open, e.g. https://race.example.com. Empty: whatever the TV was opened with.
-      PUBLIC_URL: ${PUBLIC_URL:-}
-      # Reverse proxies in front of the app: 0 if exposed directly, 1 behind one proxy.
-      TRUST_PROXY: ${TRUST_PROXY:-0}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: Europe/Malta
     volumes:
-      # Track records and the Hall of Fame.
+      # Settings, track records and open rooms. Everything else in the container is read-only.
       - raceoff-data:/data
     restart: unless-stopped
     read_only: true

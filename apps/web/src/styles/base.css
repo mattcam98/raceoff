@@ -486,8 +486,16 @@ input[type='range'] {
 .name-input {
   font-size: 1.5rem;
 }
+.home__links {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+}
 .home__link {
   font-weight: 700;
+}
+.home__link--quiet {
+  color: var(--text-faint);
 }
 
 /* ---------------------------------------------------------------- records */

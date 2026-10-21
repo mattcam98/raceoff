@@ -31,11 +31,12 @@ export interface Theme {
   night?: boolean;
 }
 
+/** A material of its own, not a cached one: its texture copy is made for one world and freed with it. */
 function texMat(t: THREE.Texture, repeat: number, size: number, color = '#ffffff') {
   const tt = t.clone();
   tt.needsUpdate = true;
   tt.repeat.set(size / repeat, size / repeat);
-  return mat(color, { map: tt });
+  return new THREE.MeshLambertMaterial({ color, map: tt });
 }
 
 /** The table or desk the track sits on: its top is the floor, and it stands in a room far below. */
@@ -95,7 +96,7 @@ function clothDrape() {
   const t = tex.gingham('#e8414b', '#ffffff').clone();
   t.needsUpdate = true;
   t.repeat.set(9, 0.8);
-  return mat('#ffffff', { map: t, side: THREE.DoubleSide });
+  return new THREE.MeshLambertMaterial({ color: '#ffffff', map: t, side: THREE.DoubleSide });
 }
 
 export const THEMES: Record<string, Theme> = {

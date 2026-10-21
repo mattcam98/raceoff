@@ -88,6 +88,36 @@ export class Records {
     return result;
   }
 
+  /** Start the Hall of Fame afresh. */
+  clear() {
+    this.data = { tracks: {}, players: [] };
+    this.scheduleSave();
+  }
+
+  /**
+   * Take a name off the Hall of Fame: its tally and its race times. A lap record it held is cleared, since
+   * only the best lap is kept and the one before it is not known.
+   */
+  remove(name: string): boolean {
+    const key = name.trim().toLowerCase();
+    const is = (n: string) => n.toLowerCase() === key;
+    let found = false;
+    const before = this.data.players.length;
+    this.data.players = this.data.players.filter((p) => !is(p.name));
+    found ||= this.data.players.length !== before;
+    for (const track of Object.values(this.data.tracks)) {
+      const n = track.races.length;
+      track.races = track.races.filter((r) => !is(r.name));
+      found ||= track.races.length !== n;
+      if (track.bestLap && is(track.bestLap.name)) {
+        track.bestLap = null;
+        found = true;
+      }
+    }
+    if (found) this.scheduleSave();
+    return found;
+  }
+
   private scheduleSave() {
     if (!this.file || this.saveTimer) return;
     this.saveTimer = setTimeout(() => {

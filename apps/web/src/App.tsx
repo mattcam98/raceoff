@@ -8,6 +8,7 @@ import { Phone } from './phone/Phone';
 const Tv = lazy(async () => ({ default: (await import('./tv/Tv')).Tv }));
 const NewRoom = lazy(async () => ({ default: (await import('./tv/Tv')).NewRoom }));
 const Records = lazy(async () => ({ default: (await import('./views/Records')).Records }));
+const Settings = lazy(async () => ({ default: (await import('./views/Settings')).Settings }));
 
 const code = (raw: string | undefined) => normalizeRoomCode(raw ?? '');
 
@@ -22,6 +23,7 @@ export function App() {
           <Route path="/join/:code">{(p) => <Phone key={code(p.code)} code={code(p.code)} />}</Route>
           <Route path="/play/:code">{(p) => <Phone key={code(p.code)} code={code(p.code)} />}</Route>
           <Route path="/records">{() => <Records />}</Route>
+          <Route path="/settings">{() => <Settings />}</Route>
           {/* Typing just the code after the address works too. */}
           <Route path="/:code">{(p) => (code(p.code).length === ROOM_CODE_LENGTH ? <Redirect to={`/join/${code(p.code)}`} /> : <Redirect to="/" />)}</Route>
         </Switch>

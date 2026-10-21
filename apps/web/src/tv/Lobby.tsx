@@ -12,24 +12,30 @@ import { RecordsBoard } from '../views/Records';
 import type { Director } from './director';
 import { SCHEME_HELP } from './keyboard';
 
-/** Where phones should go: the configured address, this machine on the network, or wherever the TV is. */
+const onLoopback = () => ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+
+/**
+ * Where phones should go: the address set in Settings, this machine on the network, or wherever the TV is.
+ * `reachable` is false when that is only this machine's loopback, which no phone can open.
+ */
 function useJoinBase() {
-  const [base, setBase] = useState(window.location.origin);
+  const [join, setJoin] = useState({ base: window.location.origin, reachable: !onLoopback() });
   useEffect(() => {
     api.info().then(
       (info) => {
-        if (info.publicUrl) return setBase(info.publicUrl.replace(/\/+$/, ''));
-        const local = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
-        if (local && info.lan[0]) setBase(`${window.location.protocol}//${info.lan[0]}${window.location.port ? `:${window.location.port}` : ''}`);
+        if (info.publicUrl) return setJoin({ base: info.publicUrl.replace(/\/+$/, ''), reachable: true });
+        if (onLoopback() && info.lan[0]) {
+          setJoin({ base: `${window.location.protocol}//${info.lan[0]}${window.location.port ? `:${window.location.port}` : ''}`, reachable: true });
+        }
       },
       () => undefined,
     );
   }, []);
-  return base;
+  return join;
 }
 
 export function Lobby({ director, link, room }: { director: Director; link: TvLink; room: RoomView }) {
-  const base = useJoinBase();
+  const { base, reachable } = useJoinBase();
   const url = `${base}/join/${room.code}`;
   const [qr, setQr] = useState<string | null>(null);
   const [tab, setTab] = useState<'race' | 'records'>('race');
@@ -62,6 +68,12 @@ export function Lobby({ director, link, room }: { director: Director; link: TvLi
         </ol>
         <div className="join-qr">{qr && <img src={qr} alt={`QR code to join at ${url}`} />}</div>
         <p className="join-url">{base.replace(/^https?:\/\//, '')}</p>
+        {!reachable && (
+          <p className="notice">
+            Phones cannot open <b>localhost</b>. Open this screen at the server's network address, or set the phone
+            address under <a href="/settings">Settings</a>.
+          </p>
+        )}
         <ol className="join-steps" start={2}>
           <li>
             <span>2</span>Enter the room code
