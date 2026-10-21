@@ -87,18 +87,24 @@ Serve RaceOff over HTTPS (a reverse proxy with a certificate) to have those.
 
 ## Playing
 
-**On the phone.** Hold it sideways. The left half steers: put your thumb down
-anywhere and slide left or right (or switch to tilt, or to two buttons, under
-⚙). The right half has:
+**On the phone.** Either way up. The left thumb steers: put it down anywhere
+on the left side and a stick appears under it; slide left or right. Past full
+lock the stick follows the thumb, so turning back answers at once. Under ⚙ you
+can switch to tilt (tap the left side to recentre) or two big arrows you can
+slide between. The right thumb has, on its natural arc:
 
-- **DRIFT**: hold it while turning to hop into a power slide. Sparks build
-  from blue to orange to purple; let go for a speed boost that grows with them.
-  Tap it in mid-air off a ramp for a trick and a boost on landing.
-- **ITEM**: use what you are holding. Hold **BRAKE** at the same time to throw
-  it backwards.
+- **DRIFT**, the big button under the resting thumb: hold it while turning to
+  hop into a power slide. The drift keeps your speed; steer into the bend to
+  tighten it, out of it to widen it, or hands off to hold a steady arc. Sparks
+  build from blue to orange to purple; let go for a speed boost that grows with
+  them. Tap it in mid-air off a ramp for a trick and a boost on landing.
+- **ITEM**, up and in from DRIFT: use what you are holding. Hold **BRAKE** at
+  the same time to throw it backwards.
 - **BRAKE**: slow down, and reverse when stopped.
 
-The kart accelerates on its own; turn that off under ⚙ for a GAS button.
+Held sideways, the place and lap are in the top bar; held upright, they fill the
+top half and both thumbs work along the bottom. The kart accelerates on its
+own; turn that off under ⚙ for a GAS button (holding DRIFT accelerates too).
 Tap DRIFT just as GO appears for a rocket start (too early and you stall).
 Android phones buzz on hits, items and laps.
 

@@ -58,6 +58,16 @@ export function kartParams(character: string, body: string, ccScale: number): Ka
 /** Drift charge needed for each spark colour. */
 export const DRIFT_LEVELS = [0.7, 1.45, 2.35];
 const DRIFT_BOOST = [0.55, 1.0, 1.5];
+/**
+ * How hard a drift turns, as a share of full steering lock: steering out of it opens the arc to the first,
+ * steering into it tightens it to the second, and hands off holds it halfway.
+ */
+export const DRIFT_TURN = { wide: 0.45, tight: 1.15 };
+/** How quickly the drift's arc follows the steering, per second: changes of line are smooth, never a jerk. */
+const DRIFT_TURN_EASE = 2.6;
+/** Sideways grip in a drift, and how much of the speed it lets slide outward. */
+const DRIFT_GRIP = 13;
+const DRIFT_SLIDE = 0.07;
 
 export class Kart {
   // identity
@@ -98,6 +108,13 @@ export class Kart {
   /** -1 left, 1 right, 0 not drifting. */
   driftDir = 0;
   driftCharge = 0;
+  /** The drift's current turn, as a share of full lock: eases toward what the steering asks for. */
+  driftTurn = 0;
+  /**
+   * How far the body is swung into the corner, in radians (signed like driftDir). For looks only: the kart
+   * travels where it points, so a drift is predictable, and the body swings in and back out smoothly.
+   */
+  driftYaw = 0;
   hopping = false;
   /** A drift was asked for in this hop but no direction yet. */
   driftWanted = false;
@@ -294,10 +311,12 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
     k.driftDir = Math.sign(k.steer);
     k.driftCharge = 0;
     k.driftWanted = false;
+    // The drift turns as hard as the steering already was, then eases to its own arc: no snap on the way in.
+    k.driftTurn = Math.abs(k.steer);
     ev.drift(k, true);
   }
   if (k.driftDir && !inp.drift) {
-    // Let go: cash in the sparks.
+    // Let go: cash in the sparks. The kart already travels where it points, so it carries straight on.
     const level = k.driftLevel;
     ev.drift(k, false);
     if (level > 0) {
@@ -305,24 +324,25 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
       ev.boost(k, 'drift', level);
     }
     k.stopDrift();
-    // Straighten out: the slide hands its speed back to the nose.
-    const sp = Math.max(0, k.speed);
-    k.vx = lerp(k.vx, fwdX(k.h) * sp, 0.5);
-    k.vz = lerp(k.vz, fwdZ(k.h) * sp, 0.5);
   }
 
   // ---- turning
   let turnInput = k.steer;
+  // 0 steering out of the drift, 0.5 hands off, 1 steering into it.
+  const inward = k.driftDir ? clamp((k.steer * k.driftDir + 1) / 2, 0, 1) : 0;
   if (k.driftDir) {
-    // Always turning into the drift: steering tightens it or opens it out.
-    turnInput = k.driftDir * lerp(0.3, 1.2, (k.steer * k.driftDir + 1) / 2);
+    // Always turning into the drift; the steering trims the arc between wide and tight.
+    k.driftTurn = approach(k.driftTurn, lerp(DRIFT_TURN.wide, DRIFT_TURN.tight, inward), dt * DRIFT_TURN_EASE);
+    turnInput = k.driftDir * k.driftTurn;
     if (k.grounded) k.driftCharge += dt * (0.75 + 0.55 * Math.max(0, k.steer * k.driftDir));
   }
+  // The body swings into the corner as the drift builds (more when tightening) and back out after it.
+  const yawTarget = k.driftDir && controlled ? k.driftDir * lerp(0.08, 0.34, inward) : 0;
+  k.driftYaw = damp(k.driftYaw, yawTarget, k.driftDir ? 6 : 8, dt);
   const speedForTurn = Math.abs(fwdSpeed);
   // Turning needs speed, but a kart pressed against a wall can still nudge its nose round.
   const crawl = controlled && (inp.gas || inp.brake) ? 0.22 : 0;
   let turnRate = p.turn * Math.max(crawl, Math.min(1, speedForTurn / 7)) * (1 - 0.18 * clamp(speedForTurn / p.maxSpeed, 0, 1.4));
-  if (k.driftDir) turnRate *= 1.12;
   if (!k.grounded) turnRate *= k.hopping ? 0.8 : 0.35;
   if (k.stun === 'squash') turnRate *= 0.7;
   const reversing = fwdSpeed < -0.5;
@@ -386,18 +406,35 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
 
     // Grip: how fast sideways slip is killed.
     let grip = p.grip;
-    if (k.driftDir) grip = 2.2;
+    if (k.driftDir) grip = DRIFT_GRIP;
     if (surf === SURF.slick && !protectedFromGround) grip = Math.min(grip, 1.1);
     if (surf === SURF.sand && !k.driftDir) grip *= 0.7;
     if (!controlled) grip = 1.5;
-    vr = damp(vr, 0, grip, dt);
-    if (k.driftDir) {
-      // A drift slides outward a little, then holds.
-      vr = damp(vr, -k.driftDir * Math.abs(vf) * 0.18, 4, dt);
+    if (k.driftDir && controlled && vf > 0) {
+      // A drift slides outward a touch and holds there. Its momentum is kept: whatever the tyres take out of
+      // the sideways slide goes back into the nose, so a drift costs no speed.
+      const slid = damp(vr, -k.driftDir * vf * DRIFT_SLIDE, grip, dt);
+      vf = Math.sqrt(Math.max(0, vf * vf + vr * vr - slid * slid));
+      vr = slid;
+      // The engine drives the nose; the slide must not add to it, so a drift is never faster than top speed.
+      const sp = Math.hypot(vf, vr);
+      if (sp > top) {
+        const keep = Math.max(top, sp - dt * 18) / sp;
+        vf *= keep;
+        vr *= keep;
+      }
+    } else {
+      vr = damp(vr, 0, grip, dt);
     }
   } else {
     // In the air: no engine, no grip. A little drag so jumps do not carry forever.
     vf *= 1 - 0.05 * dt;
+    if (k.hopping && controlled && vf > 0) {
+      // A drift's hop is a bounce, not a jump: the kart keeps going where it points, at the same speed.
+      const sp = Math.hypot(vf, vr);
+      vr = damp(vr, 0, 10, dt);
+      vf = Math.sqrt(Math.max(0, sp * sp - vr * vr));
+    }
   }
   k.vx = fx * vf + rx * vr;
   k.vz = fz * vf + rz * vr;

@@ -1,8 +1,12 @@
 /**
- * The phone as a kart controller. Left thumb steers (drag, tilt or two
- * buttons), right thumb has DRIFT, ITEM and BRAKE; the kart accelerates on
- * its own unless you turn that off. Input lives in refs and goes out on a
- * fixed beat, so touches never wait on React.
+ * The phone as a kart controller, laid out for thumbs in either orientation.
+ *
+ * Left thumb steers: a floating stick that appears wherever the thumb lands
+ * (or tilt, or two big arrows). Right thumb has a cluster on its natural arc:
+ * DRIFT, the one held most, sits under the resting thumb; ITEM is up and in
+ * from it; BRAKE is smaller and further away. The kart accelerates on its own
+ * unless that is turned off. Input lives in refs and goes out on a fixed
+ * beat, so touches never wait on React.
  */
 import { BTN, itemById, PLAYER_LABELS, type GameStatus, type Hud, type PlayerInfo } from '@raceoff/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -23,9 +27,30 @@ const motionNeedsTap = () =>
 
 const SEND_MS = 33;
 const HEARTBEAT_MS = 120;
+/** No steering inside this share of the travel, so a resting thumb drives straight. */
+const DEAD_ZONE = 0.06;
+/** Tilt for full lock, in radians (about 30 degrees). */
+const TILT_LOCK = 0.52;
+
+/** Keep a finger's events coming to this element. Some browsers throw for a finger that has already lifted. */
+function capture(e: React.PointerEvent) {
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    /* the finger is gone; its pointerup has already been or will not be needed */
+  }
+}
+
+/** Steering response: gentle around the centre for small corrections, full lock at the end of the travel. */
+function shape(v: number) {
+  const a = Math.abs(v);
+  if (a <= DEAD_ZONE) return 0;
+  const t = Math.min(1, (a - DEAD_ZONE) / (1 - DEAD_ZONE));
+  return Math.sign(v) * (0.55 * t + 0.45 * t * t);
+}
 
 export function Controller({ link, me, game, vip }: { link: PhoneLink; me: PlayerInfo; game: GameStatus; vip: boolean }) {
-  // Tilt saved on a secure page cannot work on a plain-http one: start on drag there.
+  // Tilt saved on a secure page cannot work on a plain-http one: start on the slide stick there.
   const [mode, setMode] = useState<SteerMode>(() => {
     const saved = prefs.get<SteerMode>('steer', 'touch');
     return saved === 'tilt' && !window.isSecureContext ? 'touch' : saved;
@@ -36,18 +61,25 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   const [invertTilt, setInvertTilt] = useState<boolean>(() => prefs.get('invertTilt', false));
   const [menu, setMenu] = useState(false);
   const [hud, setHud] = useState<Hud | null>(link.latestHud);
-  const [pressed, setPressed] = useState({ drift: false, item: false, brake: false, gas: false, left: false, right: false });
+  const [pressed, setPressed] = useState({ drift: false, item: false, brake: false, gas: false });
+  const [steering, setSteering] = useState(false);
+  const [arrowSide, setArrowSide] = useState(0);
   const [rollIcon, setRollIcon] = useState(0);
   const [tiltError, setTiltError] = useState<string | null>(null);
+  const [centred, setCentred] = useState(false);
 
   const steer = useRef(0);
   const buttons = useRef(0);
   const items = useRef(0);
-  const wheelRef = useRef<HTMLDivElement>(null);
-  const zoneRef = useRef<HTMLDivElement>(null);
-  const touchOrigin = useRef<{ id: number; x: number } | null>(null);
+  const zoneRef = useRef<HTMLElement>(null);
+  const stickRef = useRef<HTMLDivElement>(null);
+  const knobRef = useRef<HTMLDivElement>(null);
+  /** The floating stick: which finger, and where its centre is now. */
+  const stick = useRef<{ id: number; x: number; y: number } | null>(null);
+  /** Thumb travel for full lock, in pixels. */
+  const range = useRef(64);
   const tiltNeutral = useRef<number | null>(null);
-  const dirKeys = useRef({ left: false, right: false });
+  const arrows = useRef(new Map<number, -1 | 1>());
 
   useEffect(() => {
     link.onHud = (h) => setHud(h);
@@ -75,6 +107,26 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     };
   }, []);
 
+  // Full lock is a short thumb slide: a share of the steering side, within what a thumb does comfortably.
+  useEffect(() => {
+    const zone = zoneRef.current;
+    if (!zone) return;
+    const fit = () => {
+      range.current = Math.max(48, Math.min(96, zone.clientWidth * 0.2)) / sens;
+      stickRef.current?.style.setProperty('--range', `${range.current}px`);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(zone);
+    return () => ro.disconnect();
+  }, [sens, mode]);
+
+  /** Show the steering on the stick's knob. */
+  const showSteer = useCallback((raw: number) => {
+    const knob = knobRef.current;
+    if (knob) knob.style.transform = `translateX(${Math.max(-1, Math.min(1, raw)) * range.current}px)`;
+  }, []);
+
   // The steady stream of inputs to the TV.
   useEffect(() => {
     let last = '';
@@ -88,7 +140,9 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       }
       const s = Math.round(Math.max(-1, Math.min(1, steer.current)) * 100);
       let b = buttons.current;
-      if (autoGas && !document.hidden && !(b & BTN.brake)) b |= BTN.gas;
+      // Holding DRIFT keeps the power on too, so a drift never needs a second thumb for the gas.
+      if ((autoGas && !document.hidden) || b & BTN.drift) b |= BTN.gas;
+      if (b & BTN.brake) b &= ~BTN.gas;
       const key = `${s}|${b}|${items.current}`;
       const now = performance.now();
       if (key !== last || now - lastAt > HEARTBEAT_MS) {
@@ -96,7 +150,6 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         last = key;
         lastAt = now;
       }
-      if (wheelRef.current) wheelRef.current.style.transform = `rotate(${s * 0.9}deg)`;
     }, SEND_MS);
     return () => window.clearInterval(t);
   }, [link, autoGas]);
@@ -125,15 +178,17 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       let d = angle - tiltNeutral.current;
       if (d > Math.PI) d -= Math.PI * 2;
       if (d < -Math.PI) d += Math.PI * 2;
-      // About 30 degrees of turn is full lock.
-      steer.current = Math.max(-1, Math.min(1, (d / 0.52) * sens * (invertTilt ? -1 : 1)));
+      const raw = Math.max(-1, Math.min(1, (d / TILT_LOCK) * sens * (invertTilt ? -1 : 1)));
+      steer.current = shape(raw);
+      showSteer(raw);
     };
     window.addEventListener('devicemotion', onMotion);
     return () => {
       window.removeEventListener('devicemotion', onMotion);
       steer.current = 0;
+      showSteer(0);
     };
-  }, [mode, sens, invertTilt]);
+  }, [mode, sens, invertTilt, showSteer]);
 
   const setBit = (bit: number, on: boolean) => {
     buttons.current = on ? buttons.current | bit : buttons.current & ~bit;
@@ -153,31 +208,113 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     buzz('tick');
   };
 
-  // Drag steering: the finger's distance from where it first touched sets the angle.
+  /** A hold-to-act button: on while its finger is down, wherever that finger wanders. */
+  const hold = (what: 'drift' | 'brake' | 'gas') => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      capture(e);
+      press(what, true);
+    },
+    onPointerUp: () => press(what, false),
+    onPointerCancel: () => press(what, false),
+    onLostPointerCapture: () => press(what, false),
+  });
+
+  // ---- the steering side
+
+  const zonePoint = (e: React.PointerEvent) => {
+    const r = zoneRef.current!.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  const placeStick = (x: number, y: number) => {
+    const el = stickRef.current;
+    if (!el) return;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  };
+  const endStick = () => {
+    stick.current = null;
+    steer.current = 0;
+    setSteering(false);
+    showSteer(0);
+    const el = stickRef.current;
+    if (el) el.style.left = el.style.top = '';
+  };
+
   const onZoneDown = (e: React.PointerEvent) => {
     tryFullscreen();
-    if (mode !== 'touch') return;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    touchOrigin.current = { id: e.pointerId, x: e.clientX };
+    if (mode === 'tilt') {
+      // A tap on the steering side makes the phone's current angle straight ahead.
+      tiltNeutral.current = null;
+      setCentred(true);
+      window.setTimeout(() => setCentred(false), 900);
+      buzz('tick');
+      return;
+    }
+    if (mode !== 'touch' || stick.current) return;
+    capture(e);
+    const p = zonePoint(e);
+    stick.current = { id: e.pointerId, ...p };
+    placeStick(p.x, p.y);
+    setSteering(true);
   };
   const onZoneMove = (e: React.PointerEvent) => {
-    const o = touchOrigin.current;
-    if (mode !== 'touch' || !o || o.id !== e.pointerId) return;
-    const w = zoneRef.current?.clientWidth ?? 300;
-    const range = Math.max(50, w * 0.22) / sens;
-    steer.current = Math.max(-1, Math.min(1, (e.clientX - o.x) / range));
+    const s = stick.current;
+    if (mode !== 'touch' || !s || s.id !== e.pointerId) return;
+    const p = zonePoint(e);
+    const R = range.current;
+    let dx = p.x - s.x;
+    // Past full lock the stick follows the thumb, so turning back answers at once instead of after the slack.
+    if (Math.abs(dx) > R) {
+      s.x = p.x - Math.sign(dx) * R;
+      dx = Math.sign(dx) * R;
+      placeStick(s.x, s.y);
+    }
+    steer.current = shape(dx / R);
+    showSteer(dx / R);
   };
   const onZoneUp = (e: React.PointerEvent) => {
-    const o = touchOrigin.current;
-    if (!o || o.id !== e.pointerId) return;
-    touchOrigin.current = null;
-    steer.current = 0;
+    if (stick.current?.id === e.pointerId) endStick();
   };
-  const dir = (side: 'left' | 'right', on: boolean) => {
-    dirKeys.current[side] = on;
-    steer.current = (dirKeys.current.right ? 1 : 0) - (dirKeys.current.left ? 1 : 0);
-    setPressed((p) => ({ ...p, [side]: on }));
-    if (on) buzz('tick');
+
+  // Arrows: one surface split down the middle, so a thumb can slide from one side to the other without lifting.
+  const arrowAt = (e: React.PointerEvent): -1 | 1 => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return e.clientX < r.left + r.width / 2 ? -1 : 1;
+  };
+  const syncArrows = () => {
+    let sum = 0;
+    for (const v of arrows.current.values()) sum += v;
+    const side = Math.sign(sum);
+    steer.current = side;
+    setArrowSide((prev) => {
+      if (prev !== side && side !== 0) buzz('tick');
+      return side;
+    });
+  };
+  const arrowHandlers = {
+    onPointerDown: (e: React.PointerEvent) => {
+      e.stopPropagation();
+      tryFullscreen();
+      capture(e);
+      arrows.current.set(e.pointerId, arrowAt(e));
+      syncArrows();
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (!arrows.current.has(e.pointerId)) return;
+      const side = arrowAt(e);
+      if (arrows.current.get(e.pointerId) === side) return;
+      arrows.current.set(e.pointerId, side);
+      syncArrows();
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      arrows.current.delete(e.pointerId);
+      syncArrows();
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      arrows.current.delete(e.pointerId);
+      syncArrows();
+    },
   };
 
   /** Switch steering. False if tilt could not be turned on (the reason is shown in the controls sheet). */
@@ -188,7 +325,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       const fail = (why: string) => (setTiltError(why), false);
       if (!Ctor) return fail('This phone has no tilt sensor.');
       // Browsers only report motion to secure pages: on plain http tilt would silently do nothing.
-      if (!window.isSecureContext) return fail('Tilt needs a secure (https) address. Use Drag or Buttons here.');
+      if (!window.isSecureContext) return fail('Tilt needs a secure (https) address. Use Slide or Arrows here.');
       if (typeof Ctor.requestPermission === 'function') {
         try {
           const res = await Ctor.requestPermission();
@@ -198,7 +335,9 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         }
       }
     }
-    steer.current = 0;
+    endStick();
+    arrows.current.clear();
+    setArrowSide(0);
     setMode(m);
     setTiltAsleep(false);
     prefs.set('steer', m);
@@ -207,28 +346,35 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
 
   const charge = hud?.charge ?? 0;
   const itemIcon = hud?.rolling ? ITEM_ICONS[ROULETTE_ORDER[rollIcon]] : hud?.item ? ITEM_ICONS[hud.item] : '';
+  const holding = !!hud?.item && !hud.rolling;
   const stunned = hud?.stunned;
   const finished = hud?.finished;
   const countdown = hud?.stage === 'countdown' || game.phase === 'intro';
 
+  const status =
+    hud && !countdown ? (
+      <>
+        <span className="pad__place">
+          <b>{hud.place}</b>
+          <sup>{suffix(hud.place)}</sup>
+          <small>/{hud.racers}</small>
+        </span>
+        <span className="pad__lap">
+          Lap <b>{hud.lap}</b>/{hud.laps}
+        </span>
+      </>
+    ) : (
+      <span className="pad__lap">{game.phase === 'intro' ? 'Get ready…' : 'Tap DRIFT on GO for a rocket start!'}</span>
+    );
+
   return (
-    <main className={`pad${stunned ? ' is-stunned' : ''}${finished ? ' is-finished' : ''}`} onContextMenu={(e) => e.preventDefault()}>
+    <main
+      className={`pad pad--${mode}${stunned ? ' is-stunned' : ''}${finished ? ' is-finished' : ''}${autoGas ? '' : ' has-gas'}`}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       <header className="pad__bar">
         <span className="tag">{PLAYER_LABELS[me.slot]}</span>
-        {hud && !countdown ? (
-          <>
-            <span className="pad__place">
-              <b>{hud.place}</b>
-              <sup>{suffix(hud.place)}</sup>
-              <small>/{hud.racers}</small>
-            </span>
-            <span className="pad__lap">
-              Lap <b>{hud.lap}</b>/{hud.laps}
-            </span>
-          </>
-        ) : (
-          <span className="pad__lap">{game.phase === 'intro' ? 'Get ready…' : 'Tap DRIFT on GO for a rocket start!'}</span>
-        )}
+        <div className="pad__status">{status}</div>
         <span className="pad__spacer" />
         {vip && (
           <button className="icon-btn" aria-label="Pause" onClick={() => link.command('pause')}>
@@ -240,6 +386,17 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         </button>
       </header>
 
+      {/* Portrait only: the race at a glance, above the thumbs. */}
+      <section className="pad__dash" aria-hidden>
+        <div className="pad__status pad__status--big">{status}</div>
+        <div className="pad__held">{holding ? itemById(hud!.item!)?.name : ' '}</div>
+        <div className={`pad__meter charge-${charge}`}>
+          <i />
+          <i />
+          <i />
+        </div>
+      </section>
+
       {hud?.wrongWay && <div className="pad__banner pad__banner--warn">Wrong way!</div>}
       {finished && (
         <div className="pad__finish">
@@ -248,83 +405,73 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         </div>
       )}
 
-      <section className="pad__left" ref={zoneRef} onPointerDown={onZoneDown} onPointerMove={onZoneMove} onPointerUp={onZoneUp} onPointerCancel={onZoneUp}>
+      <section
+        className={`pad__steer${steering ? ' is-steering' : ''}`}
+        ref={zoneRef}
+        onPointerDown={onZoneDown}
+        onPointerMove={onZoneMove}
+        onPointerUp={onZoneUp}
+        onPointerCancel={onZoneUp}
+        onLostPointerCapture={onZoneUp}
+      >
         {mode === 'buttons' ? (
-          <div className="dpad">
-            <button className={pressed.left ? 'is-down' : ''} onPointerDown={() => dir('left', true)} onPointerUp={() => dir('left', false)} onPointerCancel={() => dir('left', false)} onPointerLeave={() => pressed.left && dir('left', false)} aria-label="Steer left">
+          <div className="arrows" {...arrowHandlers}>
+            <span className={arrowSide < 0 ? 'is-down' : ''} aria-label="Steer left">
               ◀
-            </button>
-            <button className={pressed.right ? 'is-down' : ''} onPointerDown={() => dir('right', true)} onPointerUp={() => dir('right', false)} onPointerCancel={() => dir('right', false)} onPointerLeave={() => pressed.right && dir('right', false)} aria-label="Steer right">
+            </span>
+            <span className={arrowSide > 0 ? 'is-down' : ''} aria-label="Steer right">
               ▶
-            </button>
+            </span>
           </div>
         ) : (
-          <div className="wheel-wrap">
-            <div className="wheel" ref={wheelRef}>
-              <svg viewBox="0 0 100 100" aria-hidden>
-                <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" strokeWidth="9" />
-                <path d="M10 52 Q50 40 90 52 M50 52 V92" stroke="currentColor" strokeWidth="9" fill="none" strokeLinecap="round" />
-                <circle cx="50" cy="52" r="9" fill="currentColor" />
-              </svg>
+          <>
+            <div className="stick" ref={stickRef}>
+              <div className="stick__track">
+                <i />
+              </div>
+              <div className="stick__knob" ref={knobRef} />
             </div>
             {tiltAsleep ? (
               <button
-                className="btn btn--go"
-                // Kept from the steering zone, which would capture the pointer and swallow the click.
+                className="btn btn--go pad__wake"
+                // Kept from the steering side, which would take the tap as recentring.
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => void chooseMode('tilt').then((ok) => ok || void chooseMode('touch'))}
               >
                 Tap to turn on tilt
               </button>
             ) : (
-              <p>{mode === 'tilt' ? 'Tilt to steer' : 'Drag left and right to steer'}</p>
+              <p className="pad__hint">
+                {mode === 'tilt' ? (centred ? 'Centred' : 'Tilt to steer · tap here to centre') : 'Thumb down anywhere here, slide to steer'}
+              </p>
             )}
-          </div>
+          </>
         )}
       </section>
 
-      <section className="pad__right">
+      <section className="pad__act">
         <button
-          className={`pad-btn pad-btn--item${pressed.item ? ' is-down' : ''}${hud?.rolling ? ' is-rolling' : ''}${hud?.item ? ' is-full' : ''}`}
+          className={`pad-btn pad-btn--item${pressed.item ? ' is-down' : ''}${hud?.rolling ? ' is-rolling' : ''}${holding ? ' is-full' : ''}`}
           onPointerDown={(e) => (e.preventDefault(), useItem())}
-          aria-label="Use item"
+          aria-label={holding ? `Use ${itemById(hud!.item!)?.name}` : 'Use item'}
         >
           <i dangerouslySetInnerHTML={{ __html: itemIcon }} />
           {hud && hud.count > 1 && !hud.rolling && <em>×{hud.count}</em>}
-          <span>{hud?.item && !hud.rolling ? itemById(hud.item)?.name : 'ITEM'}</span>
+          {!itemIcon && <span>ITEM</span>}
         </button>
-        <button
-          className={`pad-btn pad-btn--drift charge-${charge}${pressed.drift ? ' is-down' : ''}`}
-          onPointerDown={(e) => ((e.currentTarget as HTMLElement).setPointerCapture(e.pointerId), press('drift', true))}
-          onPointerUp={() => press('drift', false)}
-          onPointerCancel={() => press('drift', false)}
-          aria-label="Drift"
-        >
+        <button className={`pad-btn pad-btn--drift charge-${charge}${pressed.drift ? ' is-down' : ''}`} {...hold('drift')} aria-label="Drift (hold)">
           <span>DRIFT</span>
-          <small>hold</small>
+          <small>{countdown ? 'tap on GO' : 'hold'}</small>
         </button>
-        <div className="pad__small">
-          <button
-            className={`pad-btn pad-btn--brake${pressed.brake ? ' is-down' : ''}`}
-            onPointerDown={(e) => ((e.currentTarget as HTMLElement).setPointerCapture(e.pointerId), press('brake', true))}
-            onPointerUp={() => press('brake', false)}
-            onPointerCancel={() => press('brake', false)}
-            aria-label="Brake and reverse"
-          >
-            BRAKE
+        <button className={`pad-btn pad-btn--brake${pressed.brake ? ' is-down' : ''}`} {...hold('brake')} aria-label="Brake and reverse">
+          <span>BRAKE</span>
+          {holding && <small>+ ITEM throws back</small>}
+        </button>
+        {!autoGas && (
+          <button className={`pad-btn pad-btn--gas${pressed.gas ? ' is-down' : ''}`} {...hold('gas')} aria-label="Accelerate">
+            GAS
           </button>
-          {!autoGas && (
-            <button
-              className={`pad-btn pad-btn--gas${pressed.gas ? ' is-down' : ''}`}
-              onPointerDown={(e) => ((e.currentTarget as HTMLElement).setPointerCapture(e.pointerId), press('gas', true))}
-              onPointerUp={() => press('gas', false)}
-              onPointerCancel={() => press('gas', false)}
-              aria-label="Accelerate"
-            >
-              GAS
-            </button>
-          )}
-        </div>
+        )}
       </section>
 
       {game.paused && (
@@ -359,45 +506,42 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
               <div className="seg">
                 {(['touch', 'tilt', 'buttons'] as SteerMode[]).map((m) => (
                   <button key={m} className={mode === m ? 'is-on' : ''} onClick={() => void chooseMode(m)}>
-                    {m === 'touch' ? 'Drag' : m === 'tilt' ? 'Tilt' : 'Buttons'}
+                    {m === 'touch' ? 'Slide' : m === 'tilt' ? 'Tilt' : 'Arrows'}
                   </button>
                 ))}
               </div>
             </div>
             {tiltError && <p className="notice">{tiltError}</p>}
             {mode === 'tilt' && (
-              <div className="tilt-row">
-                <button className="btn btn--tiny" onClick={() => (tiltNeutral.current = null)}>
-                  Recentre
-                </button>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={invertTilt}
-                    onChange={(e) => {
-                      setInvertTilt(e.target.checked);
-                      prefs.set('invertTilt', e.target.checked);
-                    }}
-                  />
-                  <span>Turns the wrong way? Flip it</span>
-                </label>
-              </div>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={invertTilt}
+                  onChange={(e) => {
+                    setInvertTilt(e.target.checked);
+                    prefs.set('invertTilt', e.target.checked);
+                  }}
+                />
+                <span>Turns the wrong way? Flip it</span>
+              </label>
             )}
-            <label className="field">
-              <span>Sensitivity</span>
-              <input
-                type="range"
-                min={0.6}
-                max={1.6}
-                step={0.1}
-                value={sens}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setSens(v);
-                  prefs.set('sens', v);
-                }}
-              />
-            </label>
+            {mode !== 'buttons' && (
+              <label className="field">
+                <span>Sensitivity: {sens < 0.95 ? 'calm' : sens > 1.05 ? 'quick' : 'normal'}</span>
+                <input
+                  type="range"
+                  min={0.6}
+                  max={1.6}
+                  step={0.1}
+                  value={sens}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setSens(v);
+                    prefs.set('sens', v);
+                  }}
+                />
+              </label>
+            )}
             <label className="toggle">
               <input
                 type="checkbox"
@@ -410,6 +554,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
               <span>Accelerate automatically</span>
             </label>
             {canVibrate() && <VibrationToggle />}
+            <p className="dim sheet__tip">Drifting: hold DRIFT and steer into the bend to tighten it, out of it to widen it. Let go for a boost.</p>
             <button className="btn btn--go" onClick={() => setMenu(false)}>
               Done
             </button>
@@ -438,12 +583,11 @@ function VibrationToggle() {
 }
 
 let askedFullscreen = false;
+/** Full screen on the first touch, where the browser allows it. Either way up works, so the orientation is left free. */
 function tryFullscreen() {
   if (askedFullscreen) return;
   askedFullscreen = true;
   const el = document.documentElement;
   if (document.fullscreenElement || !el.requestFullscreen) return;
-  el.requestFullscreen({ navigationUI: 'hide' })
-    .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape'))
-    .catch(() => undefined);
+  el.requestFullscreen({ navigationUI: 'hide' }).catch(() => undefined);
 }

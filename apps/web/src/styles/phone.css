@@ -300,12 +300,30 @@
 
 /* ---------------------------------------------------------------- the controller */
 
+/*
+ * Thumb-first. Landscape: steering on the left half, the action cluster on the right, the race status in the
+ * top bar. Portrait: the status grows into a dashboard on top and both thumbs work along the bottom edge.
+ * The cluster follows the right thumb's arc: DRIFT under the resting thumb, ITEM up and in from it, BRAKE
+ * smaller and further away. Sizes come from the screen's short side, so it fits any phone either way up.
+ */
 .pad {
+  --edge: max(14px, 3.5vmin);
+  --gap: max(10px, 2.6vmin);
+  --drift: clamp(112px, 40vmin, 196px);
+  --item: clamp(84px, 29vmin, 148px);
+  --brake-w: clamp(84px, 23vmin, 128px);
+  --brake-h: clamp(52px, 14vmin, 70px);
+  --knob: clamp(52px, 15vmin, 72px);
+  /* Where ITEM sits around DRIFT, as shares of their spacing: left, and up. */
+  --arc-x: 0.7;
+  --arc-y: 0.72;
+  --arc: calc(var(--drift) / 2 + var(--item) / 2 + var(--gap));
   position: fixed;
   inset: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: 'bar bar' 'steer act';
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -313,6 +331,7 @@
   overflow: hidden;
   background:
     radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--pc) 22%, transparent), transparent 70%),
+    radial-gradient(500px 360px at 100% 100%, rgb(255 77 46 / 0.12), transparent 70%),
     var(--ink-900);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
@@ -326,13 +345,20 @@
   background: rgb(255 77 46 / 0.18);
   pointer-events: none;
 }
+
+/* ---- status */
 .pad__bar {
-  grid-column: 1 / -1;
+  grid-area: bar;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px 14px;
   font-family: var(--font-display);
+}
+.pad__status {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
 }
 .pad__place {
   font-weight: 900;
@@ -360,6 +386,9 @@
 .pad__spacer {
   flex: 1;
 }
+.pad__dash {
+  display: none;
+}
 .pad__banner {
   position: absolute;
   top: 54px;
@@ -371,6 +400,7 @@
   font-size: 1.4rem;
   padding: 4px 16px;
   border-radius: 999px;
+  pointer-events: none;
 }
 .pad__banner--warn {
   background: var(--sun);
@@ -401,164 +431,356 @@
   font-weight: 800;
   color: var(--text-dim);
 }
-.pad__left {
+
+/* ---- steering: a stick that appears under the thumb */
+.pad__steer {
+  grid-area: steer;
   position: relative;
+  touch-action: none;
+  min-height: 0;
+}
+.stick {
+  --range: 64px;
+  position: absolute;
+  /* At rest it waits where a left thumb falls; touching anywhere brings it to the thumb. */
+  left: 50%;
+  top: 64%;
+  width: calc(var(--range) * 2 + var(--knob));
+  height: var(--knob);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0.5;
+  transition: opacity 160ms, left 220ms var(--ease-out), top 220ms var(--ease-out);
+}
+.pad__steer.is-steering .stick {
+  opacity: 1;
+  transition: opacity 80ms;
+}
+.stick__track {
+  position: absolute;
+  inset: 12% 0;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.28);
+  box-shadow: inset 0 0 0 2px var(--line-strong);
+}
+.stick__track::before,
+.stick__track::after {
+  /* Arrowheads at the ends of the travel. */
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border: 7px solid transparent;
+  transform: translateY(-50%);
+  opacity: 0.6;
+}
+.stick__track::before {
+  left: 12px;
+  border-right-color: var(--text-dim);
+  border-left-width: 0;
+}
+.stick__track::after {
+  right: 12px;
+  border-left-color: var(--text-dim);
+  border-right-width: 0;
+}
+.stick__track i {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  bottom: 22%;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--line-strong);
+}
+.stick__knob {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: var(--knob);
+  height: var(--knob);
+  margin-left: calc(var(--knob) / -2);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--pc) 70%, #fff), var(--pc) 60%);
+  box-shadow: 0 5px 0 rgb(0 0 0 / 0.35), 0 0 0 3px rgb(255 255 255 / 0.25);
+  will-change: transform;
+}
+.pad__steer.is-steering .stick__knob {
+  box-shadow: 0 3px 0 rgb(0 0 0 / 0.35), 0 0 0 4px rgb(255 255 255 / 0.5), 0 0 24px color-mix(in srgb, var(--pc) 60%, transparent);
+}
+.pad--tilt .stick {
+  opacity: 0.9;
+}
+.pad__hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--edge);
+  margin: 0;
+  padding: 0 12px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--text-faint);
+  pointer-events: none;
+  transition: opacity 160ms;
+}
+.pad__steer.is-steering .pad__hint {
+  opacity: 0;
+}
+.pad__wake {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+}
+.arrows {
+  position: absolute;
+  inset: var(--gap) var(--gap) var(--edge) var(--edge);
   display: grid;
-  place-items: center;
-  border-right: 2px dashed rgb(255 255 255 / 0.08);
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
   touch-action: none;
 }
-.wheel-wrap {
+.arrows span {
   display: grid;
-  justify-items: center;
-  gap: 10px;
-  pointer-events: none;
-  color: var(--text-faint);
-  font-weight: 700;
-  text-align: center;
-}
-.wheel-wrap p {
-  margin: 0;
-}
-.wheel {
-  width: min(42vmin, 200px);
-  height: min(42vmin, 200px);
-  color: var(--pc);
-  filter: drop-shadow(0 6px 0 rgb(0 0 0 / 0.35));
-  transition: transform 40ms linear;
-}
-.wheel svg {
-  width: 100%;
-  height: 100%;
-}
-.dpad {
-  display: flex;
-  gap: 14px;
-  width: 100%;
-  height: 100%;
-  padding: 14px;
-}
-.dpad button {
-  flex: 1;
-  border: 0;
-  border-radius: 24px;
+  place-items: center;
+  border-radius: 26px;
   background: rgb(255 255 255 / 0.08);
   font-size: 2.6rem;
   color: var(--pc);
-  box-shadow: 0 6px 0 rgb(0 0 0 / 0.35);
-  touch-action: none;
+  box-shadow: 0 6px 0 rgb(0 0 0 / 0.35), inset 0 0 0 2px var(--line);
+  transition: transform 50ms, box-shadow 50ms, background 80ms;
+  pointer-events: none;
 }
-.dpad button.is-down {
+.arrows span.is-down {
   transform: translateY(5px);
   box-shadow: 0 1px 0 rgb(0 0 0 / 0.35);
-  background: color-mix(in srgb, var(--pc) 30%, transparent);
+  background: color-mix(in srgb, var(--pc) 34%, transparent);
 }
-.pad__right {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr auto;
-  gap: 12px;
-  padding: 10px 14px 14px;
+
+/* ---- the action cluster, on the right thumb's arc */
+.pad__act {
+  grid-area: act;
+  position: relative;
   touch-action: none;
+  min-height: 0;
 }
 .pad-btn {
   appearance: none;
   border: 0;
-  border-radius: 26px;
+  position: absolute;
   font-family: var(--font-display);
   font-weight: 900;
-  font-size: 1.3rem;
+  font-size: 1.2rem;
   color: #fff;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
-  position: relative;
   display: grid;
   place-content: center;
   justify-items: center;
-  transition: transform 50ms, box-shadow 50ms;
+  gap: 2px;
+  transition: transform 50ms, box-shadow 50ms, filter 80ms;
 }
 .pad-btn.is-down {
   transform: translateY(5px);
+  filter: brightness(1.12);
+}
+.pad-btn small {
+  font-size: 0.68rem;
+  font-weight: 800;
+  opacity: 0.8;
+  letter-spacing: 0.02em;
+}
+.pad-btn--drift {
+  right: var(--edge);
+  bottom: var(--edge);
+  width: var(--drift);
+  height: var(--drift);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 30%, #ff7a5c, var(--race) 62%);
+  box-shadow: 0 7px 0 var(--race-deep), 0 14px 26px -10px rgb(0 0 0 / 0.7);
+  font-size: 1.55rem;
+}
+.pad-btn--drift.is-down {
+  box-shadow: 0 2px 0 var(--race-deep);
+}
+.pad-btn--drift.charge-1 {
+  box-shadow: 0 7px 0 var(--race-deep), 0 0 0 5px #5ec8ff, 0 0 30px #5ec8ff;
+}
+.pad-btn--drift.charge-2 {
+  box-shadow: 0 7px 0 var(--race-deep), 0 0 0 5px #ffa630, 0 0 32px #ffa630;
+}
+.pad-btn--drift.charge-3 {
+  box-shadow: 0 7px 0 var(--race-deep), 0 0 0 6px #c77dff, 0 0 38px #c77dff;
+}
+.pad-btn--drift.is-down.charge-1,
+.pad-btn--drift.is-down.charge-2,
+.pad-btn--drift.is-down.charge-3 {
+  transform: translateY(3px);
 }
 .pad-btn--item {
+  right: calc(var(--edge) + var(--drift) / 2 + var(--arc-x) * var(--arc) - var(--item) / 2);
+  bottom: calc(var(--edge) + var(--drift) / 2 + var(--arc-y) * var(--arc) - var(--item) / 2);
+  width: var(--item);
+  height: var(--item);
+  border-radius: 50%;
   background: var(--ink-700);
   box-shadow: 0 6px 0 var(--ink-950), inset 0 0 0 3px rgb(255 255 255 / 0.15);
-  grid-row: 1;
-  grid-column: 1;
 }
 .pad-btn--item i {
-  width: min(22vmin, 96px);
-  height: min(22vmin, 96px);
+  width: 66%;
+  height: 66%;
   display: block;
 }
 .pad-btn--item i:empty {
   display: none;
 }
 .pad-btn--item span {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: var(--text-dim);
 }
 .pad-btn--item em {
   position: absolute;
-  top: 10px;
-  right: 14px;
+  top: 4%;
+  right: 4%;
   font-style: normal;
-  font-size: 1.2rem;
+  font-size: 1rem;
+  background: var(--sun);
+  color: #2a1c00;
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 .pad-btn--item.is-full {
-  box-shadow: 0 6px 0 var(--ink-950), inset 0 0 0 4px var(--sun), 0 0 26px rgb(255 201 60 / 0.4);
+  box-shadow: 0 6px 0 var(--ink-950), inset 0 0 0 4px var(--sun), 0 0 26px rgb(255 201 60 / 0.45);
   animation: nudge 1.2s ease-in-out infinite;
 }
 .pad-btn--item.is-rolling {
   box-shadow: 0 6px 0 var(--ink-950), inset 0 0 0 4px var(--pink);
 }
 .pad-btn--item.is-down {
-  box-shadow: 0 1px 0 var(--ink-950);
-}
-.pad-btn--drift {
-  background: var(--race);
-  box-shadow: 0 6px 0 var(--race-deep);
-  grid-row: 1;
-  grid-column: 2;
-  font-size: 1.6rem;
-}
-.pad-btn--drift small {
-  font-size: 0.75rem;
-  opacity: 0.75;
-}
-.pad-btn--drift.is-down {
-  box-shadow: 0 1px 0 var(--race-deep);
-}
-.pad-btn--drift.charge-1 {
-  box-shadow: 0 6px 0 var(--race-deep), 0 0 0 4px #5ec8ff, 0 0 30px #5ec8ff;
-}
-.pad-btn--drift.charge-2 {
-  box-shadow: 0 6px 0 var(--race-deep), 0 0 0 4px #ffa630, 0 0 30px #ffa630;
-}
-.pad-btn--drift.charge-3 {
-  box-shadow: 0 6px 0 var(--race-deep), 0 0 0 4px #c77dff, 0 0 36px #c77dff;
-}
-.pad__small {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 12px;
+  box-shadow: 0 1px 0 var(--ink-950), inset 0 0 0 4px var(--sun);
+  animation: none;
 }
 .pad-btn--brake,
 .pad-btn--gas {
-  flex: 1;
-  height: 64px;
+  width: var(--brake-w);
+  height: var(--brake-h);
   border-radius: 18px;
-  font-size: 1.1rem;
+  font-size: 1rem;
+  bottom: var(--edge);
 }
 .pad-btn--brake {
+  right: calc(var(--edge) + var(--drift) + var(--gap) * 1.5);
   background: var(--ink-600);
   box-shadow: 0 5px 0 var(--ink-800);
 }
+.pad-btn--brake small {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  white-space: nowrap;
+  color: var(--text-dim);
+  opacity: 1;
+}
 .pad-btn--gas {
+  right: calc(var(--edge) + var(--drift) + var(--gap) * 2.5 + var(--brake-w));
   background: var(--mint);
   color: #0d2a19;
   box-shadow: 0 5px 0 var(--mint-deep);
+}
+.pad-btn--brake.is-down,
+.pad-btn--gas.is-down {
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.4);
+}
+
+/* Portrait: the race at a glance on top, both thumbs along the bottom, the cluster stacked up the right edge. */
+@media (orientation: portrait) {
+  .pad {
+    --drift: clamp(104px, 38vmin, 176px);
+    --item: clamp(80px, 27vmin, 132px);
+    --brake-w: clamp(72px, 21vmin, 110px);
+    --arc-x: 0.18;
+    --arc-y: 0.99;
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 58%);
+    grid-template-areas: 'bar bar' 'dash dash' 'steer act';
+  }
+  .pad__bar .pad__status {
+    display: none;
+  }
+  .pad__dash {
+    grid-area: dash;
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 10px;
+    font-family: var(--font-display);
+  }
+  .pad__status--big {
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .pad__status--big .pad__place b {
+    font-size: 4.5rem;
+  }
+  .pad__status--big .pad__place sup {
+    font-size: 1.6rem;
+  }
+  .pad__status--big .pad__lap {
+    font-size: 1.2rem;
+  }
+  .pad__held {
+    font-weight: 800;
+    color: var(--sun);
+    min-height: 1.4em;
+  }
+  .pad__meter {
+    display: flex;
+    gap: 8px;
+  }
+  .pad__meter i {
+    width: 34px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.12);
+    transition: background 120ms;
+  }
+  .pad__meter.charge-1 i:nth-child(-n + 1),
+  .pad__meter.charge-2 i:nth-child(-n + 2),
+  .pad__meter.charge-3 i {
+    background: currentColor;
+  }
+  .pad__meter.charge-1 {
+    color: #5ec8ff;
+  }
+  .pad__meter.charge-2 {
+    color: #ffa630;
+  }
+  .pad__meter.charge-3 {
+    color: #c77dff;
+  }
+  .stick {
+    top: 62%;
+  }
+  .pad__steer {
+    border-top: 2px dashed rgb(255 255 255 / 0.06);
+  }
+  .pad__act {
+    border-top: 2px dashed rgb(255 255 255 / 0.06);
+  }
+  /* BRAKE (and GAS) above ITEM, still on the right edge. */
+  .pad-btn--brake,
+  .pad-btn--gas {
+    bottom: calc(var(--edge) + var(--drift) / 2 + var(--arc-y) * var(--arc) + var(--item) / 2 + var(--gap));
+  }
+  .pad-btn--brake {
+    right: var(--edge);
+  }
+  .pad-btn--gas {
+    right: calc(var(--edge) + var(--brake-w) + var(--gap));
+  }
 }
 
 .sheet {
@@ -593,18 +815,6 @@
   flex: 1;
 }
 
-/* Portrait: steering on top, buttons below. */
-@media (orientation: portrait) {
-  .pad {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr 1.15fr;
-  }
-  .pad__left {
-    border-right: 0;
-    border-bottom: 2px dashed rgb(255 255 255 / 0.08);
-  }
-}
-
 @keyframes shake {
   0%,
   100% {
@@ -618,9 +828,7 @@
   }
 }
 
-.tilt-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+.sheet__tip {
+  margin: 0;
+  font-size: 0.9rem;
 }

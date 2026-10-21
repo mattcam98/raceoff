@@ -453,10 +453,9 @@ export class GameView {
     const k = this.race!.karts[c.kart];
     const rig = this.rigs[c.kart];
     const kp = rig.root.position;
-    // Follow the direction of travel more than the nose, so drifts swing the kart, not the world.
+    // Follow the direction of travel, not the nose, so drifts swing the kart, not the world.
     const moving = Math.hypot(k.vx, k.vz) > 4;
-    const travel = moving && k.speed > -1 ? Math.atan2(k.vx, k.vz) : k.h;
-    const wantHeading = k.driftDir ? wrapAngle(k.h + wrapAngle(travel - k.h) * 0.6) : travel;
+    const wantHeading = moving && k.speed > -1 ? Math.atan2(k.vx, k.vz) : k.h;
     if (!c.init) {
       c.heading = k.h;
     } else if (!k.stun && k.respawnT === 0) {
@@ -597,11 +596,12 @@ export class GameView {
     rig.tilt.rotation.z = -k.roll;
     const sp = clamp(Math.abs(k.speed) / k.params.maxSpeed, 0, 1.3);
     // Body: drift angle, spins, flips, squash, lean and a little engine shiver.
-    let yaw = -k.driftDir * 0.32;
+    // The drift's swing into the corner eases in and out with the physics, with a lean out of the turn.
+    let yaw = -k.driftYaw;
     let pitch = 0;
     if (k.stun === 'spin') yaw += k.spinAngle;
     if (k.stun === 'tumble') pitch = k.spinAngle * 0.5;
-    rig.body.rotation.set(pitch, yaw, -k.steer * 0.06 * sp);
+    rig.body.rotation.set(pitch, yaw, -k.steer * 0.06 * sp + k.driftYaw * 0.14 * sp);
     if (k.stun === 'squash') rig.body.scale.set(1.35, 0.35, 1.35);
     else rig.body.scale.set(1, 1, 1);
     rig.body.position.y = k.speed < 1 && !k.stun ? Math.sin(this.time * 40 + k.index) * 0.025 : 0;

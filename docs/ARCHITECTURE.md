@@ -46,8 +46,12 @@ never eat one.
   - **colliders** (wall capsules along road edges, prop circles and boxes) in a
     spatial hash. Walls open automatically where another road meets them.
 - **Karts** (`kart.ts`) are arcade physics on that grid: a heading, a forward
-  speed that closes on top speed, and sideways slip that grip removes. Drifting
-  lowers grip and always turns into the bend; charge builds into a boost. The
+  speed that closes on top speed, and sideways slip that grip removes. A drift
+  always turns into the bend, on an arc the steering trims between wide and a
+  little tighter than full lock, eased so it never jerks. It keeps its momentum
+  (grip redirects the slide into the nose rather than scrubbing it off) and the
+  body's swing into the corner is a pose that eases in and out, so the kart goes
+  where it points; charge builds into a boost. The
   kart leaves the ground only when gravity could not hold it there, which is
   what makes a ramp's lip a launch.
 - **The race** (`race.ts`) steps everything: inputs, karts, items in flight,

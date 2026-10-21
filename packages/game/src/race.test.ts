@@ -1,7 +1,7 @@
 import { BODIES, CHARACTERS, TRACKS } from '@raceoff/shared';
 import { describe, expect, it } from 'vitest';
 import { drawItem } from './items';
-import { KART_RADIUS, NO_INPUT, STEP } from './kart';
+import { Kart, KART_RADIUS, NO_INPUT, STEP, stepKart } from './kart';
 import { rightX, rightZ, rng } from './math';
 import { Race, type RacerSpec } from './race';
 import { colliderDistance, type Collider } from './track/build';
@@ -206,5 +206,58 @@ describe('falls', () => {
       }
     }
     expect(falls).toBeGreaterThan(0);
+  });
+});
+
+describe('drifting', () => {
+  // An endless flat road, so only the driving is measured.
+  const flat = {
+    grid: { surfaceAt: () => SURF.road, heightAt: () => 0 },
+    voidY: -50,
+    def: { floorY: 0 },
+    query: (_x: number, _z: number, _r: number, out: Collider[]) => ((out.length = 0), out),
+  } as unknown as Parameters<typeof stepKart>[1];
+  const events = { wall() {}, boost() {}, land() {}, drift() {}, fall() {} };
+
+  /** Up to speed, then hop into a drift to the right and hold it with `steer`. Returns speeds and the turn rate. */
+  function drift(steer: number) {
+    const k = new Kart(0, 'p', CHARACTERS[0].id, BODIES[0].id, false, 1);
+    k.place3(0, 0, 0, 0);
+    for (let i = 0; i < 300; i++) ((k.input = { ...NO_INPUT, gas: true }), stepKart(k, flat, STEP, events, null));
+    const top = k.planarSpeed;
+    let low = top;
+    let travel0 = 0;
+    for (let i = 0; i < 150; i++) {
+      k.input = { ...NO_INPUT, gas: true, drift: true, steer: i < 9 ? 0.6 : steer };
+      stepKart(k, flat, STEP, events, null);
+      low = Math.min(low, k.planarSpeed);
+      if (i === 89) travel0 = Math.atan2(k.vx, k.vz);
+    }
+    // Degrees a second the direction of travel turns, once the drift has settled.
+    const turned = Math.abs(((Math.atan2(k.vx, k.vz) - travel0 + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+    return { top, low, held: k.planarSpeed, rate: (turned * 180) / Math.PI, dir: k.driftDir, yaw: k.driftYaw };
+  }
+
+  it('keeps its speed: a drift is not a brake', () => {
+    for (const steer of [-1, 0, 1]) {
+      const d = drift(steer);
+      expect(d.dir).toBe(1);
+      expect(d.low / d.top, `steer ${steer}`).toBeGreaterThan(0.95);
+      expect(d.held / d.top, `steer ${steer}`).toBeLessThanOrEqual(1.01);
+    }
+  });
+
+  it('turns progressively: steering out widens the arc, into it tightens it, never far past full lock', () => {
+    const out = drift(-1);
+    const hands = drift(0);
+    const into = drift(1);
+    expect(out.rate).toBeLessThan(hands.rate);
+    expect(hands.rate).toBeLessThan(into.rate);
+    // Full lock at this speed turns about 95 degrees a second.
+    expect(into.rate).toBeLessThan(125);
+    expect(out.rate).toBeGreaterThan(30);
+    // The body swings into the corner, more when tightening.
+    expect(into.yaw).toBeGreaterThan(hands.yaw);
+    expect(hands.yaw).toBeGreaterThan(0.1);
   });
 });
