@@ -8,7 +8,7 @@
 import type { ItemId } from '@raceoff/shared';
 import { hazardAt } from './hazards';
 import { GIANT_BLAST_RADIUS, OIL_RADIUS } from './items';
-import { DRIFT_LEVELS, DRIFT_TURN, KART_RADIUS, NO_INPUT, type Kart, type KartInput } from './kart';
+import { DRIFT_LEVELS, DRIFT_TURN, KART_RADIUS, NO_INPUT, STEER_FALLOFF, type Kart, type KartInput } from './kart';
 import { clamp, damp, fwdX, fwdZ, headingOf, rightX, rightZ, wrapAngle, type Rng } from './math';
 import type { Race } from './race';
 import type { TrackPath } from './track/build';
@@ -220,9 +220,12 @@ export class AiDriver {
     // Corner speed: the turn rate this kart has over the bend ahead.
     let kAhead = 0;
     for (let j = 0; j < Math.max(8, speed * 0.6); j += 2) kAhead = Math.max(kAhead, this.curvatureAt(this.idx + j));
-    // A drift can turn a little tighter than full lock (DRIFT_TURN.tight), and keeps its speed doing it.
-    const turn = k.params.turn * 0.92 * (k.driftDir ? DRIFT_TURN.tight : 1);
-    const corner = kAhead > 1e-4 ? (turn / kAhead) * this.skill.bravery * (race.track.def.aiCornerGrip ?? 1) : Infinity;
+    // A drift turns well past full lock (DRIFT_TURN.tight), and keeps its speed doing it. Steering softens as speed
+    // builds, so the fastest a bend can be taken solves v * curvature = turn * (1 - falloff * v / top).
+    const drifting = k.driftDir !== 0;
+    const turn = k.params.turn * 0.92 * (drifting ? DRIFT_TURN.tight : 1);
+    const falloff = (drifting ? STEER_FALLOFF.drift : STEER_FALLOFF.grip) / k.params.maxSpeed;
+    const corner = kAhead > 1e-4 ? (turn / (kAhead + turn * falloff)) * this.skill.bravery * (race.track.def.aiCornerGrip ?? 1) : Infinity;
     let gas = true;
     let brake = false;
     if (speed > corner * 1.06) gas = false;

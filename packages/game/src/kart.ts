@@ -84,6 +84,15 @@ const DRIFT_BASE_TURN = 2.14;
 const DRIFT_BASE_SHARE = 0.6;
 /** How far the body swings into a drift, in radians: steering out of it, and steering into it. For looks only. */
 const DRIFT_POSE = { wide: 0.36, tight: 0.62 };
+/**
+ * How much of its turn a kart keeps at full speed: ordinary steering softens a lot as speed builds, as in most
+ * arcade racers. At top speed a typical bend needs only a quarter to a half of full lock; with the old, sharper
+ * steering nearly all real driving happened in the first third of the thumb's travel, and with the phone's lag
+ * on top it weaved. Drifts keep their bite, so a drift turns well past full lock: that is what it is for.
+ */
+export const STEER_FALLOFF = { grip: 0.38, drift: 0.18 };
+export const turnFalloff = (speedShare: number, drifting: boolean) =>
+  1 - (drifting ? STEER_FALLOFF.drift : STEER_FALLOFF.grip) * clamp(speedShare, 0, 1.4);
 /** Share of a boost's extra speed that arrives the moment it fires (drifts, pads, tricks, items). */
 export const BOOST_KICK = 0.45;
 /** Automatic drift: how long a hard turn must be held, how hard, and the speed it needs (share of top). */
@@ -424,7 +433,7 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
   // Turning needs speed, but a kart pressed against a wall can still nudge its nose round.
   const crawl = controlled && (inp.gas || inp.brake) ? 0.22 : 0;
   const turnStat = k.driftDir ? lerp(p.turn, DRIFT_BASE_TURN, DRIFT_BASE_SHARE) : p.turn;
-  let turnRate = turnStat * Math.max(crawl, Math.min(1, speedForTurn / 7)) * (1 - 0.18 * clamp(speedForTurn / p.maxSpeed, 0, 1.4));
+  let turnRate = turnStat * Math.max(crawl, Math.min(1, speedForTurn / 7)) * turnFalloff(speedForTurn / p.maxSpeed, k.driftDir !== 0);
   if (!k.grounded) turnRate *= k.hopping ? 0.8 : 0.35;
   if (k.stun === 'squash') turnRate *= 0.7;
   const reversing = fwdSpeed < -0.5;

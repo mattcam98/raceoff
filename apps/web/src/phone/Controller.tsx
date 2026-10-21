@@ -35,6 +35,8 @@ const INCOMING: Record<GiantKind, string> = {
 
 const SEND_MS = 33;
 const HEARTBEAT_MS = 120;
+/** Shortest gap between early sends (a thumb moving, a button pressed): about one TV frame. */
+const EARLY_MS = 15;
 /** No steering inside this share of the travel, so a resting thumb drives straight. */
 const DEAD_ZONE = 0.06;
 /** Tilt for full lock, in radians (about 30 degrees). */
@@ -92,6 +94,8 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   const range = useRef(64);
   const tiltNeutral = useRef<number | null>(null);
   const tiltSmooth = useRef(0);
+  /** Send the input now rather than at the next beat. */
+  const sendNow = useRef<() => void>(() => {});
   const arrows = useRef(new Map<number, -1 | 1>());
 
   useEffect(() => {
@@ -120,12 +124,13 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     };
   }, []);
 
-  // Full lock is a short thumb slide: a share of the steering side, within what a thumb does comfortably.
+  // Full lock is a short thumb slide: a share of the steering side, within what a thumb does comfortably. Long
+  // enough that a thumb's tremble is a small share of it, so the kart does not twitch.
   useEffect(() => {
     const zone = zoneRef.current;
     if (!zone) return;
     const fit = () => {
-      range.current = Math.max(48, Math.min(96, zone.clientWidth * 0.2)) / sens;
+      range.current = Math.max(56, Math.min(108, zone.clientWidth * 0.22)) / sens;
       stickRef.current?.style.setProperty('--range', `${range.current}px`);
     };
     fit();
@@ -140,11 +145,12 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     if (knob) knob.style.transform = `translateX(${Math.max(-1, Math.min(1, raw)) * range.current}px)`;
   }, []);
 
-  // The steady stream of inputs to the TV.
+  // The steady stream of inputs to the TV, and an early send the moment a thumb moves or a button changes, so
+  // the kart does not wait for the next beat (up to 33 ms) to hear about it.
   useEffect(() => {
     let last = '';
     let lastAt = 0;
-    const t = window.setInterval(() => {
+    const send = (beat: boolean) => {
       // In the background (another app, the screen off) the browser still runs this about once a second: send
       // hands-off, so the kart coasts instead of driving on with the last steer and the gas held.
       if (document.hidden) {
@@ -161,13 +167,20 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       if (smart) b |= BTN.smart;
       const key = `${s}|${b}|${items.current}`;
       const now = performance.now();
-      if (key !== last || now - lastAt > HEARTBEAT_MS) {
+      // Early sends are kept to one a frame, so a fast-reporting touchscreen cannot flood the room.
+      if (!beat && now - lastAt < EARLY_MS) return;
+      if (key !== last || (beat && now - lastAt > HEARTBEAT_MS)) {
         link.input(s, b, items.current);
         last = key;
         lastAt = now;
       }
-    }, SEND_MS);
-    return () => window.clearInterval(t);
+    };
+    sendNow.current = () => send(false);
+    const t = window.setInterval(() => send(true), SEND_MS);
+    return () => {
+      window.clearInterval(t);
+      sendNow.current = () => {};
+    };
   }, [link, autoGas, mode, autoDrift, smart]);
 
   // Item roulette on the phone too.
@@ -201,6 +214,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       tiltSmooth.current += (raw - tiltSmooth.current) * TILT_SMOOTH;
       steer.current = shape(tiltSmooth.current);
       showSteer(tiltSmooth.current);
+      sendNow.current();
     };
     window.addEventListener('devicemotion', onMotion);
     return () => {
@@ -217,12 +231,14 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   const press = useCallback((what: 'drift' | 'brake' | 'gas', on: boolean) => {
     setBit(what === 'drift' ? BTN.drift : what === 'brake' ? BTN.brake : BTN.gas, on);
     if (what === 'brake') setBit(BTN.back, on);
+    sendNow.current();
     setPressed((p) => (p[what] === on ? p : { ...p, [what]: on }));
     if (on) buzz('tick');
   }, []);
 
   const useItem = () => {
     items.current++;
+    sendNow.current();
     setPressed((p) => ({ ...p, item: true }));
     window.setTimeout(() => setPressed((p) => ({ ...p, item: false })), 120);
     buzz('tick');
@@ -255,6 +271,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   const endStick = () => {
     stick.current = null;
     steer.current = 0;
+    sendNow.current();
     setSteering(false);
     showSteer(0);
     const el = stickRef.current;
@@ -292,6 +309,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     }
     steer.current = shape(dx / R);
     showSteer(dx / R);
+    sendNow.current();
   };
   const onZoneUp = (e: React.PointerEvent) => {
     if (stick.current?.id === e.pointerId) endStick();
@@ -307,6 +325,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     for (const v of arrows.current.values()) sum += v;
     const side = Math.sign(sum);
     steer.current = side;
+    sendNow.current();
     setArrowSide((prev) => {
       if (prev !== side && side !== 0) buzz('tick');
       return side;

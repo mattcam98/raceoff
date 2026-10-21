@@ -46,7 +46,9 @@ never eat one.
   - **colliders** (wall capsules along road edges, prop circles and boxes) in a
     spatial hash. Walls open automatically where another road meets them.
 - **Karts** (`kart.ts`) are arcade physics on that grid: a heading, a forward
-  speed that closes on top speed, and sideways slip that grip removes. A drift
+  speed that closes on top speed, and sideways slip that grip removes. Ordinary
+  steering softens as speed builds, so the stick's travel covers the bends
+  a track actually has instead of a few pixels of it. A drift
   always turns into the bend, on an arc the steering trims between wide and
   well past full lock, eased so it never jerks; every kart drifts much alike,
   handling mostly changes ordinary steering. It keeps its momentum (grip

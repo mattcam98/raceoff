@@ -83,6 +83,45 @@ Purple is now worth holding out for. Boosts still don't stack: a new boost refre
 - **The phone's slide stick and tilt** are already analog. They now reach full lock in about 0.06 s, which rounds off the phone's 30-a-second updates and nothing more. Before, they had the same 0.15 s ramp as keys, on top of network lag.
 - **Computer karts** keep the gentle ramp they were tuned with.
 
+## Controllability: twitchy, too fast, laggy
+
+Playtesting on a phone with the slide stick, steering felt twitchy, too fast and laggy. The measurements below show why.
+
+**Steering was far stronger than any corner needs.** At top speed, full lock turned the kart 101°/s. But each track's racing line needs much less:
+
+| Track | Turn needed at top speed: half the lap | 90% of the lap |
+|---|---|---|
+| Breakfast | 25°/s | 68°/s |
+| Desk | 24°/s | 46°/s |
+| Bath | 15°/s | 36°/s |
+| Sandbox | 20°/s | 40°/s |
+| Toybox | 20°/s | 39°/s |
+| Garage | 16°/s | 52°/s |
+
+So nearly all real driving happened in the first third of the thumb's travel. A tremble of a few pixels swung the kart, and the phone-to-TV delay turned corrections into weaving.
+
+**How it was measured: a "habit thumb" test driver** (`.scratch/thumb.ts`).
+- The driver moves its thumb in proportion to how far off the racing line the kart looks, the same whatever the game does with the movement.
+- Its thumb trembles by 2.5 px.
+- The TV sees each movement 0.25 s later (reaction plus phone plus network).
+- It drives one lap of every track. "Steady thumb" is a habit of 250 px per radian off line; "eager thumb" is 400 px per radian.
+
+| | Steady thumb: wall hits | Steady thumb: weave | Eager thumb: wall hits | Eager thumb: weave | Total lap time |
+|---|---|---|---|---|---|
+| Before | 16 | 0.87/s | 64 | 1.21/s | 160–193 s |
+| Softer steering at speed | 5 | 0.48/s | 11 | 1.19/s | 160–162 s |
+| + longer thumb travel, 100cc at 92% speed | 3 | 0.29/s | 5 | 1.20/s | 172–173 s |
+
+**What changed:**
+- **Steering softens with speed** (`STEER_FALLOFF`). At top speed, ordinary steering now keeps 62% of its turn (it kept 82%): full lock is 76°/s instead of 101°/s. Drifts still keep 82%, so a drift now turns about 1.3× (hands off) to 1.9× (steering in) as sharp as full-lock grip steering. That matches Mario Kart's 1.6–2.2×. Low-speed manoeuvring is unchanged.
+- **The engine classes are a little slower:** 50cc ×0.76, 100cc ×0.92, 150cc ×1.1 (they were 0.8 / 1 / 1.17).
+- **Longer slide-stick travel:** full lock now takes 22% of the steering side, between 56 and 108 px (it was 20%, 48–96 px), so a tremble is a smaller share of it.
+- **The phone sends sooner.** It sends input the moment the thumb moves, a button changes or the tilt updates, at most one early send per 15 ms. Before, input waited for the next 33 ms tick (about 16 ms on average, up to 33 ms). The 33 ms beat remains as a heartbeat.
+- **The computer drivers know about the softer steering.** They work out corner speeds from `v × curvature = turn × (1 − falloff × v / top)`.
+- **Smart steering starts correcting earlier at speed.**
+
+**Results in eight-computer races:** wall hits fell on most tracks (Breakfast 68→40, Sandbox 29→18, Toybox 31→18, Bath 10→5). Races at 100cc take 7–12% longer.
+
 ## Phone controls
 
 Players watch the TV, not the phone, so feedback through the hands and forgiving input matter more than they would on a console.

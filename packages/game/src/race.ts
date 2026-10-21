@@ -69,7 +69,7 @@ export type RaceEvent =
   | { t: 'giant'; kind: GiantKind; k: number; slot: number }
   | { t: 'giantLand'; kind: 'butter' | 'bomb'; x: number; y: number; z: number };
 
-export const CC_SCALE = { 50: 0.8, 100: 1, 150: 1.17 } as const;
+export const CC_SCALE = { 50: 0.76, 100: 0.92, 150: 1.1 } as const;
 
 /**
  * How hard a kart is to shove. A moving kart is heavier than a parked one and a boosting kart heavier still,
@@ -1111,7 +1111,8 @@ export class Race {
       const path = g.path[i] >= 0 ? this.track.paths[g.path[i]] : null;
       return s === SURF.rough && path?.surface !== SURF.rough;
     };
-    const look = 0.3 + 0.25 * clamp(k.speed / k.params.maxSpeed, 0, 1);
+    // Steering softens with speed, so the faster the kart the earlier it must start to pull back.
+    const look = 0.35 + 0.4 * clamp(k.speed / k.params.maxSpeed, 0, 1);
     const soon = unsafe(look * 0.5);
     // Once helping, it keeps on a moment after the danger clears, so it does not flicker on and off at the edge.
     if (!soon && !unsafe(look) && k.assistT < 0.2) return;
