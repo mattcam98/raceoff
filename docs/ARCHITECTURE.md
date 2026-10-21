@@ -97,6 +97,19 @@ without anyone spending long behind a wall.
   effect and engine note (`audio/sound.ts`) and tune (`audio/music.ts`, nine of
   them written as chord charts and melodies) is generated in code.
 
+## The Giant's Hand
+
+Players who are not racing (finished, or joined late) reach into the race from
+their phones. The phone sends a move (`p:giant`: a kind and a kart index); the
+server checks its shape and passes it to the TV stamped with the sender. The
+director decides whether that player is a giant now and has the charges, and
+`Race.giant` whether the target can be picked (racing, on the track, not picked
+in the last few seconds). Butter and gobstoppers become `race.giants`: a spot on
+the road ahead of the target, in their lane, that lands after a fixed fall, so
+the ring on the road is fair warning; a flick is a boost at once. Charges and
+the list of targets reach the giant's phone in its dashboard (`Hud.giant`), and
+a racer's dashboard carries `incoming` while something is falling for them.
+
 ## Security
 
 | Who | Proves it with | Can do |

@@ -1,10 +1,12 @@
 /**
  * What items look like in the world: spinning item boxes, balls, bees, bombs,
- * paper jets, oil slicks and blast rings. Models are pooled by id so nothing
- * is built or thrown away mid-race except when something new appears.
+ * paper jets, oil slicks and blast rings, and the Giant's Hand reaching in.
+ * Models are pooled by id so nothing is built or thrown away mid-race except
+ * when something new appears.
  */
 import * as THREE from 'three';
-import { BLAST_RADIUS, OIL_RADIUS, type Race } from '@raceoff/game';
+import { PLAYER_COLORS } from '@raceoff/shared';
+import { clamp, GIANT_BLAST_RADIUS, lerp, OIL_RADIUS, type Race } from '@raceoff/game';
 import { at, ball, box, cone, cyl, disposeTree, group, mat } from './kit';
 import { tex } from './textures';
 
@@ -67,6 +69,81 @@ function oilModel() {
   return m;
 }
 
+// ---------------------------------------------------------------- the Giant's Hand
+
+const SKIN = '#f1c09a';
+
+/** A pat of butter, sitting on the ground at its origin. */
+function butterPat() {
+  const butter = mat('#ffe27a', { shiny: 70 });
+  return group(box(2.4, 0.9, 1.7, butter), at(box(2.0, 0.08, 1.4, mat('#fff1b0', { shiny: 90 })), 0, 0.9, 0));
+}
+
+/** Butter that has landed: a pat on a melting yellow puddle. */
+function butterModel() {
+  const puddle = new THREE.Mesh(
+    new THREE.PlaneGeometry(OIL_RADIUS * 2.3, OIL_RADIUS * 2.3).rotateX(-Math.PI / 2),
+    new THREE.MeshPhongMaterial({ map: tex.puddle('#f5c938'), transparent: true, shininess: 140, specular: new THREE.Color('#fff6c8'), depthWrite: false }),
+  );
+  puddle.renderOrder = 3;
+  const pat = butterPat();
+  pat.scale.setScalar(0.8);
+  pat.rotation.y = 0.5;
+  return group(puddle, pat);
+}
+
+/** A giant's hand, palm down, fingers forward along +z, with a sleeve cuff in the giant's colour. */
+function handModel() {
+  const skin = mat(SKIN, { shiny: 14 });
+  const g = new THREE.Group();
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(7, 2.2, 7.5), skin);
+  g.add(palm);
+  for (let i = 0; i < 4; i++) {
+    const finger = new THREE.Mesh(new THREE.CapsuleGeometry(0.85, 4 - Math.abs(i - 1.5) * 0.5, 4, 10), skin);
+    // Pointing forward and curling down a little, like a hand about to let go.
+    finger.position.set(-2.55 + i * 1.7, -0.7, 5.4 - Math.abs(i - 1.5) * 0.35);
+    finger.rotation.x = Math.PI / 2 + 0.45;
+    g.add(finger);
+  }
+  const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.95, 3, 4, 10), skin);
+  thumb.position.set(4.1, -0.9, 1.4);
+  thumb.rotation.set(Math.PI / 2, 0, -0.95);
+  g.add(thumb);
+  const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(3.7, 3.9, 6, 18).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#ffffff' }));
+  sleeve.position.set(0, 0.4, -6.4);
+  g.add(sleeve);
+  g.traverse((o) => (o.castShadow = true));
+  g.userData.sleeve = sleeve.material;
+  return g;
+}
+
+/** Everything one giant's drop shows: the target ring and its filling disc, the hand, and what it holds. */
+function giantModel() {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.76, 1, 56).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: '#ff2d55', transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  ring.renderOrder = 4;
+  const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 56).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ff2d55', transparent: true, opacity: 0.22, depthWrite: false }));
+  fill.renderOrder = 4;
+  // A column of light from the ring up to the hand: seen from behind, a flat ring far ahead is a sliver, a beam is not.
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(1, 1, 1, 24, 1, true).translate(0, 0.5, 0),
+    new THREE.MeshBasicMaterial({ color: '#ff2d55', transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  beam.renderOrder = 5;
+  const hand = handModel();
+  const butter = butterPat();
+  const candy = ball(1.5, mat('#ffffff', { map: tex.stripes('#ff5fa2', '#ffffff', 8), shiny: 100 }), 20);
+  candy.castShadow = butter.castShadow = true;
+  g.add(ring, fill, beam, hand, butter, candy);
+  g.userData.parts = { ring, fill, beam, hand, butter, candy };
+  return g;
+}
+
+const easeOut = (x: number) => 1 - (1 - x) ** 3;
+
 interface Pooled {
   obj: THREE.Object3D;
   seen: boolean;
@@ -122,6 +199,8 @@ export class ItemsView {
   private bombs: Pool;
   private planes: Pool;
   private oils: Pool;
+  private butters: Pool;
+  private giants: Pool;
   private blasts: Pool;
   private orbits: THREE.InstancedMesh;
   private boxSpin = 0;
@@ -141,6 +220,8 @@ export class ItemsView {
     this.bombs = new Pool(this.group, bombModel);
     this.planes = new Pool(this.group, planeModel);
     this.oils = new Pool(this.group, oilModel);
+    this.butters = new Pool(this.group, butterModel);
+    this.giants = new Pool(this.group, giantModel);
     this.blasts = new Pool(this.group, () => {
       const m = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshBasicMaterial({ color: '#ffb347', transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
       return m;
@@ -171,7 +252,7 @@ export class ItemsView {
     this.boxes.instanceMatrix.needsUpdate = true;
     this.boxCores.instanceMatrix.needsUpdate = true;
 
-    for (const pool of [this.balls, this.bees, this.bombs, this.planes, this.oils, this.blasts]) pool.begin();
+    for (const pool of this.pools()) pool.begin();
     for (const p of race.projectiles) {
       const x = p.px + (p.x - p.px) * alpha;
       const y = p.py + (p.y - p.py) * alpha;
@@ -201,6 +282,12 @@ export class ItemsView {
         o.position.set(d.x, d.y + 0.17, d.z);
         const s = Math.min(1, d.age * 4);
         o.scale.set(s, 1, s);
+      } else if (d.kind === 'butter') {
+        // Splats out on landing, then slowly melts away.
+        const o = this.butters.get(d.id);
+        o.position.set(d.x, d.y + 0.17, d.z);
+        const s = Math.min(1, d.age * 6) * (1 + Math.min(0.35, d.age * 0.02));
+        o.scale.set(s, Math.min(1, d.age * 6), s);
       } else {
         const o = this.bombs.get(d.id);
         o.position.set(d.x, d.y, d.z);
@@ -213,10 +300,11 @@ export class ItemsView {
       const o = this.blasts.get(b.id);
       const f = Math.min(1, b.age / 0.4);
       o.position.set(b.x, b.y + 1, b.z);
-      o.scale.setScalar(BLAST_RADIUS * (0.3 + f * 0.8));
+      o.scale.setScalar(b.r * (0.3 + f * 0.8));
       ((o as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.7 * (1 - b.age / 0.8);
     }
-    for (const pool of [this.balls, this.bees, this.bombs, this.planes, this.oils, this.blasts]) pool.end();
+    for (const g of race.giants) this.giant(g, t);
+    for (const pool of this.pools()) pool.end();
 
     // Orbiting balls around Triple Balls holders.
     let n = 0;
@@ -234,8 +322,50 @@ export class ItemsView {
     this.orbits.instanceMatrix.needsUpdate = true;
   }
 
+  private pools() {
+    return [this.balls, this.bees, this.bombs, this.planes, this.oils, this.butters, this.blasts, this.giants];
+  }
+
+  /**
+   * A giant's drop: the ring marks where it lands and fills as it comes; the hand swoops down over it, lets go
+   * halfway, and rises away while the butter or gobstopper falls.
+   */
+  private giant(g: Race['giants'][number], t: number) {
+    const o = this.giants.get(g.id);
+    const { ring, fill, beam, hand, butter, candy } = o.userData.parts as Record<string, THREE.Mesh>;
+    const p = clamp(g.age / g.fall, 0, 1);
+    const bomb = g.kind === 'bomb';
+    const r = bomb ? GIANT_BLAST_RADIUS : OIL_RADIUS + 0.6;
+    const color = bomb ? '#ff2d55' : '#ffc93c';
+    for (const m of [ring, fill, beam]) {
+      m.position.set(g.x, g.y + 0.16, g.z);
+      (m.material as THREE.MeshBasicMaterial).color.set(color);
+    }
+    ring.scale.setScalar(r * (1 + Math.sin(t * 16) * 0.04));
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.35 * Math.abs(Math.sin(t * 9));
+    fill.scale.setScalar(r * Math.max(0.04, p));
+
+    const low = g.y + 11;
+    const high = g.y + 50;
+    const handY = p < 0.45 ? lerp(high, low, easeOut(p / 0.45)) : p < 0.55 ? low : lerp(low, high, easeOut((p - 0.55) / 0.45));
+    // The beam narrows onto the spot as it comes down.
+    beam.scale.set(r * lerp(0.55, 0.25, p), Math.max(1, handY - g.y), r * lerp(0.55, 0.25, p));
+    (beam.material as THREE.MeshBasicMaterial).opacity = 0.14 + 0.12 * Math.abs(Math.sin(t * 9));
+    hand.position.set(g.x, handY + 2.6, g.z);
+    hand.rotation.set(0, (g.id * 2.39) % (Math.PI * 2), 0);
+    (hand.userData.sleeve as THREE.MeshLambertMaterial).color.set(PLAYER_COLORS[g.slot] ?? '#ffffff');
+
+    const held = bomb ? candy : butter;
+    (bomb ? butter : candy).visible = false;
+    held.visible = true;
+    const groundY = g.y + (bomb ? 1.5 : 0);
+    const fallP = clamp((p - 0.5) / 0.5, 0, 1);
+    held.position.set(g.x, p < 0.5 ? handY : lerp(low, groundY, fallP * fallP), g.z);
+    held.rotation.set(t * 3, t * 2, 0);
+  }
+
   dispose() {
-    for (const pool of [this.balls, this.bees, this.bombs, this.planes, this.oils, this.blasts]) pool.clear();
+    for (const pool of this.pools()) pool.clear();
     // The item boxes and orbiting balls, which are made for each race.
     disposeTree(this.group);
   }

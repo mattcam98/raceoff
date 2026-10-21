@@ -248,6 +248,9 @@ function Panel({ view, onView, onSignedOut }: { view: AdminView; onView: (v: Adm
           <Row label="Screen">
             <Seg value={draft.roomDefaults.camera} options={[['split', 'Split'], ['shared', 'Shared']]} onChange={(camera) => patchRoom({ camera })} />
           </Row>
+          <Row label="Giant's Hand">
+            <Seg value={draft.roomDefaults.giants ? 'on' : 'off'} options={[['on', 'On'], ['off', 'Off']]} onChange={(v) => patchRoom({ giants: v === 'on' })} />
+          </Row>
           <Row label="Racers">
             <Stepper value={draft.roomDefaults.racers} min={1} max={8} onChange={(racers) => patchRoom({ racers })} />
           </Row>

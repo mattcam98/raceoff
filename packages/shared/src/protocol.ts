@@ -26,7 +26,7 @@ export const ItemIdSchema = z.enum(ids(ITEMS));
 
 // ---------------------------------------------------------------- settings
 
-export const RoomSettingsSchema = z.object({
+const roomSettingsShape = {
   /** One race on one track, or a cup of three with points. */
   mode: z.enum(['race', 'gp']),
   track: z.union([TrackIdSchema, z.literal('random')]),
@@ -40,9 +40,17 @@ export const RoomSettingsSchema = z.object({
   laps: z.number().int().min(1).max(5),
   /** Split screen gives every player their own view; shared is one table-top camera. */
   camera: z.enum(['split', 'shared']),
+  /** The Giant's Hand: players who are not racing (finished, or joined late) reach into the race from their phones. */
+  giants: z.boolean(),
+};
+export const RoomSettingsSchema = z.object({
+  ...roomSettingsShape,
+  // Added after the first release: settings saved without it read as on.
+  giants: roomSettingsShape.giants.default(true),
 });
 export type RoomSettings = z.infer<typeof RoomSettingsSchema>;
-export const RoomSettingsPatchSchema = RoomSettingsSchema.partial();
+/** A change to some settings. Built without defaults, so a change to one setting never resets another. */
+export const RoomSettingsPatchSchema = z.object(roomSettingsShape).partial();
 export type RoomSettingsPatch = z.infer<typeof RoomSettingsPatchSchema>;
 
 export const DEFAULT_SETTINGS: RoomSettings = {
@@ -55,6 +63,7 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   items: 'normal',
   laps: 3,
   camera: 'split',
+  giants: true,
 };
 
 // ---------------------------------------------------------------- room
@@ -137,7 +146,53 @@ export interface Hud {
   /** Spinning, flying or being put back on the track: input does nothing. */
   stunned: boolean;
   wrongWay: boolean;
+  /** A giant has just picked this racer: what is coming (a warning), or 'flick' for a helping boost. */
+  incoming?: GiantKind | null;
+  /** Set for a player who is the giant now (finished, or not in this race). */
+  giant?: GiantHud | null;
 }
+
+// ---------------------------------------------------------------- the Giant's Hand
+
+/**
+ * What a giant can do. Butter is dropped in a racer's lane ahead of them and spins whoever drives through it;
+ * a gobstopper is dropped where they will be and bursts, with a target ring on the road so it can be dodged;
+ * a flick is a helping boost.
+ */
+export const GIANT_KINDS = ['butter', 'bomb', 'flick'] as const;
+export type GiantKind = (typeof GIANT_KINDS)[number];
+/** Charges each move uses. A giant holds up to GIANT_MAX_CHARGE, refilling one every GIANT_RECHARGE seconds. */
+export const GIANT_COST: Record<GiantKind, number> = { butter: 1, bomb: 2, flick: 1 };
+export const GIANT_MAX_CHARGE = 3;
+export const GIANT_RECHARGE = 3.5;
+
+export interface GiantTarget {
+  /** Kart index in the race. */
+  k: number;
+  name: string;
+  character: string;
+  place: number;
+  cpu: boolean;
+  /** Player slot, or -1 for a computer. */
+  slot: number;
+  /** Picked by a giant a moment ago: nothing more can land on them yet. */
+  safe: boolean;
+}
+
+export interface GiantHud {
+  /** Charges, 0 to GIANT_MAX_CHARGE, with the refill in progress as the fraction. */
+  charge: number;
+  /** Racers still going, in race order. */
+  targets: GiantTarget[];
+  /** Whole seconds until the race is called, when that countdown is running. */
+  endsIn: number | null;
+}
+
+export const GiantMoveSchema = z.object({
+  kind: z.enum(GIANT_KINDS),
+  target: z.number().int().min(0).max(MAX_RACERS - 1),
+});
+export type GiantMove = z.infer<typeof GiantMoveSchema>;
 
 /** `spark1`-`spark3`: the drift's sparks turned blue, orange, purple; one, two, three pulses. */
 export type HapticKind = 'hit' | 'item' | 'boost' | 'bump' | 'lap' | 'finish' | 'go' | 'tick' | 'spark1' | 'spark2' | 'spark3';
@@ -260,6 +315,7 @@ export interface ServerToClientEvents {
   /** To the TV. */
   input: (input: RelayedInput) => void;
   command: (cmd: { pid: string; cmd: MenuCommand }) => void;
+  giant: (move: GiantMove & { pid: string }) => void;
   bye: (reason: string) => void;
 }
 
@@ -281,6 +337,7 @@ export interface ClientToServerEvents {
   'p:settings': (patch: RoomSettingsPatch) => void;
   'p:command': (cmd: MenuCommand) => void;
   'p:rename': (name: string) => void;
+  'p:giant': (move: GiantMove) => void;
   'p:leave': () => void;
 }
 

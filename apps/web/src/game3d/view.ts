@@ -29,7 +29,10 @@ export interface ViewportRect {
 
 interface Chase {
   camera: THREE.PerspectiveCamera;
+  /** Whose view this is: its viewport, dashboard and screen shake. */
   kart: number;
+  /** Which kart the camera follows: that player's own, or, once they are the giant, someone still racing. */
+  follow: number;
   heading: number;
   pos: THREE.Vector3;
   look: THREE.Vector3;
@@ -200,7 +203,15 @@ export class GameView {
     // Each player's camera hides only their own tag.
     camera.layers.enableAll();
     if (k.slot >= 0) camera.layers.disable(1 + k.slot);
-    return { camera, kart, heading: k.h, pos: new THREE.Vector3(), look: new THREE.Vector3(), shake: 0, fov: 68, init: false };
+    return { camera, kart, follow: kart, heading: k.h, pos: new THREE.Vector3(), look: new THREE.Vector3(), shake: 0, fov: 68, init: false };
+  }
+
+  /** Point player `kart`'s camera at `target` (their own kart to go back). A change of kart is a cut. */
+  follow(kart: number, target: number) {
+    const c = this.chases.find((x) => x.kart === kart);
+    if (!c || c.follow === target) return;
+    c.follow = target;
+    c.init = false;
   }
 
   setCamera(mode: CameraMode) {
@@ -321,7 +332,7 @@ export class GameView {
       case 'blast':
         this.fx.explosion(e.x, e.y, e.z);
         for (const c of this.chases) {
-          const k = race.karts[c.kart];
+          const k = race.karts[c.follow];
           const d = Math.hypot(k.x - e.x, k.z - e.z);
           if (d < 40) c.shake = Math.max(c.shake, 1 - d / 40);
         }
@@ -453,8 +464,8 @@ export class GameView {
   }
 
   private updateChase(c: Chase, dt: number) {
-    const k = this.race!.karts[c.kart];
-    const rig = this.rigs[c.kart];
+    const k = this.race!.karts[c.follow];
+    const rig = this.rigs[c.follow];
     const kp = rig.root.position;
     // Follow the direction of travel, not the nose, so drifts swing the kart, not the world.
     const moving = Math.hypot(k.vx, k.vz) > 4;

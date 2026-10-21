@@ -1,6 +1,6 @@
 import {
   BODIES, CHARACTERS, CUPS, NAME_MAX, PLAYER_COLORS, PLAYER_LABELS, TRACKS, characterById, combinedStats, trackById,
-  type GameStatus, type PlayerInfo, type RoomSettings, type RoomView,
+  type GameStatus, type Hud, type PlayerInfo, type RoomSettings, type RoomView,
 } from '@raceoff/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { Loading } from '../App';
@@ -9,6 +9,7 @@ import { prefs, seat as seatStore, type Seat } from '../lib/storage';
 import { formatTime, ordinal, portrait } from '../ui/art';
 import { Logo } from '../ui/Logo';
 import { Controller } from './Controller';
+import { GiantPanel } from './Giant';
 import { buzz } from './haptics';
 import '../styles/phone.css';
 
@@ -136,7 +137,7 @@ function Seated({ code, seat, onLost }: { code: string; seat: Seat; onLost: () =
 
   let body: React.ReactNode;
   if ((game.phase === 'intro' || game.phase === 'race') && !game.racers.includes(me.id)) {
-    body = <Waiting me={me} />;
+    body = <Waiting me={me} link={link} vip={vip} />;
   } else if (game.phase === 'intro' || game.phase === 'race') {
     body = <Controller link={link} me={me} game={game} vip={vip} />;
   } else if (game.phase === 'lobby') {
@@ -154,7 +155,22 @@ function Seated({ code, seat, onLost }: { code: string; seat: Seat; onLost: () =
 }
 
 /** Joined while a race was already running: you are in the next one. */
-function Waiting({ me }: { me: PlayerInfo }) {
+/** Not in this race: the Giant's Hand when it is on, otherwise a wait for the next one. */
+function Waiting({ me, link, vip }: { me: PlayerInfo; link: PhoneLink; vip: boolean }) {
+  const [hud, setHud] = useState<Hud | null>(link.latestHud);
+  useEffect(() => {
+    link.onHud = (h) => setHud(h);
+    return () => {
+      link.onHud = () => {};
+    };
+  }, [link]);
+  if (hud?.giant) {
+    return (
+      <main className="phone phone--giant">
+        <GiantPanel link={link} giant={hud.giant} vip={vip} />
+      </main>
+    );
+  }
   return (
     <main className="phone phone--join">
       <div className="card">
@@ -334,6 +350,9 @@ function VipSettings({ link, room }: { link: PhoneLink; room: RoomView }) {
       </Field>
       <Field label="TV screen">
         <Seg value={s.camera} options={[['split', 'Split screen'], ['shared', 'Shared view']]} onChange={(camera) => set({ camera })} />
+      </Field>
+      <Field label="Giant's Hand: finished players reach into the race">
+        <Seg value={s.giants ? 'on' : 'off'} options={[['on', 'On'], ['off', 'Off']]} onChange={(v) => set({ giants: v === 'on' })} />
       </Field>
     </section>
   );

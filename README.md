@@ -154,6 +154,32 @@ back-of-the-field odds; **Off** removes items.
   for two, quarters for three or four, with a live overview in the spare
   quarter). *Shared* is one table-top camera that keeps everyone in shot,
   like the old miniature racers.
+- **Giant's Hand**: on or off (below).
+
+### The Giant's Hand
+
+Finished first? You are not done. Anyone in the room who is not racing (they
+have finished, or they joined after the start) becomes **the giant**: their
+phone shows the racers still going, and a giant hand in their colour reaches
+into the race on the TV.
+
+| Move | Charges | What it does |
+|---|---|---|
+| 🧈 Butter | 1 | Dropped in a racer's lane, ahead of them: drive over it and spin. |
+| 🍬 Gobstopper | 2 | Dropped where they are heading. A red ring marks the spot as it falls: get out of it or flip. |
+| 👉 Flick | 1 | A friendly flick forward: a burst of speed. Help someone catch up. |
+
+A giant holds up to three charges and gets one back every 3.5 seconds. A racer
+who has just been picked is safe from giants for a few seconds, and their phone
+warns them what is coming. Finished racers are left alone. The computers try to
+dodge too.
+
+When every human is home, the race runs on while the computers finish (up to 30
+seconds, counted down on the TV and the giants' phones), so the giants get to
+play: where the computers finish still counts for Grand Prix points. Each giant's
+view on the TV follows the racer they last picked. The host can finish the race
+early from their phone. Turn the Giant's Hand off in the lobby for straight
+races, which end a few seconds after the last human finishes, as before.
 
 ### Records
 

@@ -1,6 +1,6 @@
 import { BODIES, CHARACTERS, TRACKS } from '@raceoff/shared';
 import { describe, expect, it } from 'vitest';
-import { drawItem, itemRank } from './items';
+import { drawItem, GIANT_BLAST_RADIUS, GIANT_PROTECT, itemRank } from './items';
 import { collideStatic, DRIFT_LEVELS, Kart, KART_RADIUS, NO_INPUT, STEP, stepKart, type KartInput } from './kart';
 import { rightX, rightZ, rng, wrapAngle } from './math';
 import { Race, type RacerSpec } from './race';
@@ -468,5 +468,121 @@ describe('walls', () => {
     expect(hit(0.15)).toBeGreaterThan(0.93);
     expect(hit(Math.PI / 4)).toBeGreaterThan(0.6);
     expect(hit(Math.PI / 2)).toBeLessThan(0.4);
+  });
+});
+
+describe("the Giant's Hand", () => {
+  /** One human on Breakfast, past the countdown and rolling. */
+  function rolling(steps = 150) {
+    const race = new Race({ track: getTrack('breakfast'), racers: [{ ...cpus(1)[0], id: 'p1', cpu: false, slot: 0 }], laps: 3, cc: 100, items: 'normal', difficulty: 'normal', seed: 1 });
+    const gas = { ...NO_INPUT, gas: true };
+    while (race.time < 0) race.step([gas]);
+    for (let i = 0; i < steps; i++) race.step([gas]);
+    return race;
+  }
+  const settle = (race: Race, seconds: number, input = NO_INPUT) => {
+    for (let i = 0; i < seconds / STEP; i++) race.step([input]);
+  };
+
+  it('cannot reach into the race before it starts', () => {
+    const race = new Race({ track: getTrack('breakfast'), racers: cpus(2), laps: 1, cc: 100, items: 'normal', difficulty: 'normal', seed: 1 });
+    expect(race.giant('butter', 0, 1)).toBe(false);
+  });
+
+  it('drops butter on the road ahead, in the racer’s lane, and it spins whoever drives into it', () => {
+    const race = rolling();
+    const k = race.karts[0];
+    expect(race.giant('butter', 0, 1)).toBe(true);
+    const g = race.giants[0];
+    const ahead = (g.x - k.x) * Math.sin(k.h) + (g.z - k.z) * Math.cos(k.h);
+    expect(ahead).toBeGreaterThan(8);
+    expect([SURF.road, SURF.boost]).toContain(race.track.grid.surfaceAt(g.x, g.z));
+    settle(race, 1.2);
+    expect(race.giants.length).toBe(0);
+    const butter = race.drops.find((d) => d.kind === 'butter')!;
+    expect(butter).toBeDefined();
+    // Put the kart onto it.
+    k.place3(butter.x, butter.y, butter.z, k.h);
+    settle(race, 0.1);
+    expect(k.stun).toBe('spin');
+  });
+
+  it('marks where a gobstopper will land, so a racer who is not there escapes it', () => {
+    const race = rolling();
+    const k = race.karts[0];
+    expect(race.giant('bomb', 0, 1)).toBe(true);
+    const ring = { ...race.giants[0] };
+    // Brake hard: the ring was aimed at where the kart would have been.
+    settle(race, 1.5, { ...NO_INPUT, brake: true });
+    expect(Math.hypot(k.x - ring.x, k.z - ring.z)).toBeGreaterThan(GIANT_BLAST_RADIUS);
+    expect(k.stun).toBeNull();
+    expect(race.blasts.length).toBeGreaterThan(0);
+  });
+
+  it('bursts a gobstopper on a racer who is under it', () => {
+    const race = rolling();
+    const k = race.karts[0];
+    race.giant('bomb', 0, 1);
+    const ring = race.giants[0];
+    settle(race, 1.2, NO_INPUT);
+    k.place3(ring.x, ring.y, ring.z, k.h);
+    settle(race, 0.4, NO_INPUT);
+    expect(k.stun).toBe('tumble');
+  });
+
+  it('flicks a racer forward, and gives each racer a breather before the next pick', () => {
+    const race = rolling();
+    const k = race.karts[0];
+    expect(race.giant('flick', 0, 1)).toBe(true);
+    expect(k.boost).toBeGreaterThan(0.5);
+    // Picked a moment ago: protected.
+    expect(race.giant('bomb', 0, 2)).toBe(false);
+    settle(race, GIANT_PROTECT + 0.1, { ...NO_INPUT, gas: true });
+    expect(race.giant('butter', 0, 2)).toBe(true);
+  });
+
+  it('leaves finished racers alone', () => {
+    const race = rolling();
+    race.karts[0].finished = true;
+    expect(race.giant('flick', 0, 1)).toBe(false);
+  });
+});
+
+describe('the race end, with giants', () => {
+  /** One human and three computers; the human is put over the line at once. */
+  function humanHome(giantTime: number) {
+    const racers = [{ ...cpus(1)[0], id: 'p1', cpu: false, slot: 0 }, ...cpus(4).slice(1)];
+    const race = new Race({ track: getTrack('breakfast'), racers, laps: 3, cc: 100, items: 'normal', difficulty: 'normal', seed: 3, giantTime });
+    while (race.time < 1) race.step([NO_INPUT]);
+    race.karts[0].finished = true;
+    race.karts[0].finishTime = race.time;
+    return race;
+  }
+  const run = (race: Race, seconds: number) => {
+    for (let i = 0; i < seconds / STEP && !race.over; i++) race.step([NO_INPUT]);
+  };
+
+  it('ends soon after the humans are home when there are no giants', () => {
+    const race = humanHome(0);
+    run(race, 4);
+    expect(race.over).toBe(true);
+  });
+
+  it('runs on for the giants while the computers race, counting down', () => {
+    const race = humanHome(30);
+    run(race, 10);
+    expect(race.over).toBe(false);
+    expect(race.closingIn).toBeGreaterThan(19);
+    expect(race.closingIn).toBeLessThan(21);
+    run(race, 21);
+    expect(race.over).toBe(true);
+  });
+
+  it('can be called early by the host', () => {
+    const race = humanHome(30);
+    run(race, 2);
+    race.endNow();
+    run(race, 0.1);
+    expect(race.over).toBe(true);
   });
 });

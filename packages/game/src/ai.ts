@@ -7,6 +7,7 @@
  */
 import type { ItemId } from '@raceoff/shared';
 import { hazardAt } from './hazards';
+import { GIANT_BLAST_RADIUS, OIL_RADIUS } from './items';
 import { DRIFT_LEVELS, DRIFT_TURN, KART_RADIUS, NO_INPUT, type Kart, type KartInput } from './kart';
 import { clamp, damp, fwdX, fwdZ, headingOf, rightX, rightZ, wrapAngle, type Rng } from './math';
 import type { Race } from './race';
@@ -385,7 +386,9 @@ export class AiDriver {
       push += side > 0 ? -amount : amount;
     };
     if (this.rand() < this.skill.awareness || this.dodge !== 0) {
-      for (const d of race.drops) consider(d.x, d.z, d.kind === 'oil' ? 2.6 : 1.5, 1.6);
+      for (const d of race.drops) consider(d.x, d.z, d.kind === 'bomb' ? 1.5 : OIL_RADIUS, 1.6);
+      // A giant's target ring: steer out of where it will land.
+      for (const g of race.giants) consider(g.x, g.z, g.kind === 'bomb' ? GIANT_BLAST_RADIUS * 0.8 : OIL_RADIUS, 1.5);
       // Steer for where a moving hazard will be when we get there, not where it is now.
       const speed = Math.max(8, k.speed);
       for (const h of race.hazards) {

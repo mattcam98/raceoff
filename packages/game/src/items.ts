@@ -102,7 +102,8 @@ export interface Projectile {
 
 export interface Drop {
   id: number;
-  kind: 'oil' | 'bomb';
+  /** Butter is a giant's: it spins whoever drives through it, like oil. */
+  kind: 'oil' | 'bomb' | 'butter';
   owner: number;
   x: number;
   y: number;
@@ -121,6 +122,34 @@ export interface Blast {
   r: number;
   age: number;
 }
+
+/**
+ * Something a giant is dropping into the race (see Race.giant): where it lands, and how long it has been
+ * falling. It is on the road as a target ring from the moment it is picked, so it can be dodged.
+ */
+export interface GiantDrop {
+  id: number;
+  kind: 'butter' | 'bomb';
+  /** The giant's player slot, for the colour of the hand. */
+  slot: number;
+  /** The racer it was aimed at. */
+  target: number;
+  x: number;
+  y: number;
+  z: number;
+  age: number;
+  /** Seconds from the pick to the landing. */
+  fall: number;
+}
+
+/** Seconds a giant's drop takes to land: long enough to see the ring and steer clear. */
+export const GIANT_FALL = { butter: 1.1, bomb: 1.4 } as const;
+/** A gobstopper's burst: smaller than a Pop Bomb's, so a quick swerve gets out of it. */
+export const GIANT_BLAST_RADIUS = 6;
+/** After a giant picks a racer, nothing more from a giant comes for them for this long. */
+export const GIANT_PROTECT = 4.5;
+/** A flick: a boost this long, at this much of top speed. */
+export const GIANT_FLICK = { seconds: 1.1, mul: 1.42 } as const;
 
 export const OIL_RADIUS = 2.6;
 export const BALL_RADIUS = 0.9;

@@ -75,6 +75,7 @@ export class Hud {
   private ticker: HTMLElement;
   private tickerRows: { row: HTMLElement; name: Cell; pos: Cell; flag: Flag }[] = [];
   private closing: Cell;
+  private feedEl: HTMLElement;
   private race: Race | null = null;
   private lastRoll = 0;
   private rollIndex = 0;
@@ -89,6 +90,7 @@ export class Hud {
     this.mapCtx = this.map.getContext('2d')!;
     this.ticker = el('div', 'hud-ticker', this.root);
     this.closing = new Cell(el('div', 'hud-closing', this.root));
+    this.feedEl = el('div', 'hud-feed', this.root);
     this.setVisible(false);
   }
 
@@ -99,6 +101,7 @@ export class Hud {
 
   setRace(race: Race) {
     this.race = race;
+    this.feedEl.innerHTML = '';
     this.buildMap(race);
     this.ticker.innerHTML = '';
     this.tickerRows = race.karts.map(() => {
@@ -286,6 +289,19 @@ export class Hud {
     this.countdown.node.classList.remove('pop');
     void this.countdown.node.offsetWidth;
     this.countdown.node.classList.add('pop');
+  }
+
+  /**
+   * A line in the feed at the top of the screen: what the giants are up to. `html` must already be escaped;
+   * `slot` colours it for the player it is about.
+   */
+  feed(html: string, slot = -1) {
+    const row = el('div', 'hud-feed__row', this.feedEl);
+    row.innerHTML = html;
+    if (slot >= 0) row.style.setProperty('--pc', PLAYER_COLORS[slot]);
+    while (this.feedEl.children.length > 3) this.feedEl.firstElementChild!.remove();
+    window.setTimeout(() => row.classList.add('is-out'), 3400);
+    window.setTimeout(() => row.remove(), 3900);
   }
 
   /** A banner over one player's view: FINAL LAP, a record, the finish. */

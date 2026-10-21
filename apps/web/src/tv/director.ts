@@ -5,8 +5,8 @@
  * through `subscribe` / `getState`.
  */
 import {
-  BODIES, BTN, CHARACTERS, characterById, cupTracks, GP_POINTS, TRACKS, trackById,
-  type GameStatus, type HapticKind, type Hud as PhoneHud, type MenuCommand, type PlayerInfo, type RecordNews, type RoomSettings,
+  BODIES, BTN, CHARACTERS, characterById, cupTracks, GIANT_COST, GIANT_MAX_CHARGE, GIANT_RECHARGE, GP_POINTS, TRACKS, trackById,
+  type GameStatus, type GiantHud, type GiantMove, type HapticKind, type Hud as PhoneHud, type MenuCommand, type PlayerInfo, type RecordNews, type RoomSettings,
   type RoomView, type Standing,
 } from '@raceoff/shared';
 import { AiDriver, getTrack, NO_INPUT, Race, rng, STEP, type KartInput, type RaceEvent, type RacerSpec } from '@raceoff/game';
@@ -15,7 +15,7 @@ import { audioReady, EngineVoice, play, type SoundName } from '../audio/sound';
 import type { GameView } from '../game3d/view';
 import type { TvLink } from '../lib/net';
 import { ordinal } from '../ui/art';
-import type { Hud } from './hud';
+import { escapeHtml, type Hud } from './hud';
 import { KeyboardPads } from './keyboard';
 
 export type TvPhase = 'lobby' | 'intro' | 'race' | 'results' | 'standings' | 'podium';
@@ -49,6 +49,8 @@ interface PadState {
 }
 
 const INTRO_SECONDS = 4.4;
+/** How long the race runs on for the giants once every human is home, unless the computers finish first. */
+const GIANT_TIME = 30;
 const RESULTS_AUTO = 18;
 const ITEM_SOUNDS: Record<string, SoundName> = {
   ball: 'throw', ball3: 'throw', seeker: 'bee', oil: 'oil', bomb: 'bombThrow', plane: 'jet', shield: 'shield',
@@ -84,6 +86,12 @@ export class Director {
   /** Development aid: computers drive the humans' karts too. */
   autopilot = false;
   private autoDrivers: (AiDriver | null)[] = [];
+  /** The Giant's Hand: each giant's charges, by player id. */
+  private giantCharge = new Map<string, number>();
+  /** Race time until which a flicked racer's phone shows the flick. */
+  private flickedUntil: number[] = [];
+  /** For a giant with a kart in the race: the racer they last picked, whom their TV camera follows. */
+  private giantPicked = new Map<number, number>();
 
   constructor(
     private link: TvLink,
@@ -103,6 +111,7 @@ export class Director {
       p.at = performance.now();
     };
     link.onCommand = ({ cmd }) => this.command(cmd);
+    link.onGiant = (move) => this.giantMove(move);
     view.onLayout = (rects) => this.hud.layout(rects);
   }
 
@@ -193,6 +202,10 @@ export class Director {
         break;
       case 'intro':
         if (cmd === 'skip' || cmd === 'next') this.phaseT = INTRO_SECONDS;
+        break;
+      case 'race':
+        // Everyone is home and the giants are playing: the host can call it.
+        if (cmd === 'skip') this.race?.endNow();
         break;
       case 'results':
         if (cmd === 'next' || cmd === 'start' || cmd === 'skip') this.afterResults();
@@ -297,7 +310,9 @@ export class Director {
     this.series = lineup;
     this.attract = false;
     const track = getTrack(trackId);
-    this.race = new Race({ track, racers: grid, laps: s.laps, cc: s.cc, items: s.items, difficulty: s.difficulty, seed: (Math.random() * 1e9) | 0 });
+    // With the Giant's Hand on and phones in the room, the race runs on after the humans are home, for the giants.
+    const giantTime = s.giants && this.room?.players.some((p) => !p.local) ? GIANT_TIME : 0;
+    this.race = new Race({ track, racers: grid, laps: s.laps, cc: s.cc, items: s.items, difficulty: s.difficulty, seed: (Math.random() * 1e9) | 0, giantTime });
     this.kartPid = this.race.karts.map((k) => (k.cpu ? null : k.id));
     const race = this.race;
     this.autoDrivers = race.karts.map((k) => (k.cpu ? null : new AiDriver(race, k, 'hard', rng(k.index + 1))));
@@ -309,6 +324,9 @@ export class Director {
     this.hud.setVisible(false);
     this.finalLapPlayed = false;
     this.driftLevels = this.race.karts.map(() => 0);
+    this.giantCharge.clear();
+    this.giantPicked.clear();
+    this.flickedUntil = this.race.karts.map(() => -1);
     this.hudSent.clear();
     this.phaseT = 0;
     this.set({ phase: 'intro', track: trackId, records: [], paused: false, autoIn: null });
@@ -459,6 +477,7 @@ export class Director {
           race.step(this.collectInputs(race));
           this.acc -= STEP;
           steps++;
+          if (phase === 'race') this.chargeGiants(race);
           this.handleEvents(race);
         }
         if (steps === 6) this.acc = 0;
@@ -480,6 +499,7 @@ export class Director {
     const alpha = phase === 'intro' || paused ? 1 : this.acc / STEP;
     this.view.render(alpha, paused ? 0 : dt);
     if (phase === 'race' && race) {
+      this.followForGiants(race);
       this.hud.update();
       this.updateEngines(race);
       this.hudTimer -= dt;
@@ -694,7 +714,105 @@ export class Director {
       case 'pop':
         if (!attract && this.nearness(e.x, e.z) > 0.3) play('pop', 0, 0.5);
         break;
+      case 'giant': {
+        if (attract) return;
+        const giant = this.room?.players.find((p) => p.slot === e.slot)?.name ?? 'A giant';
+        const target = race.karts[e.k];
+        const who = `<b>${escapeHtml(target.name)}</b>`;
+        if (e.kind === 'flick') {
+          play('pad', this.panOf(e.k));
+          this.flickedUntil[e.k] = race.time + 1.4;
+          this.hud.feed(`👉 <b>${escapeHtml(giant)}</b> flicked ${who} forward`, e.slot);
+          if (human(e.k)) {
+            this.hud.banner(e.k, `FLICKED BY ${giant.toUpperCase()}!`, 'good', 1300);
+            this.haptic(e.k, 'boost');
+          }
+        } else {
+          play(e.kind === 'bomb' ? 'bombThrow' : 'whoosh', this.panOf(e.k), 0.9);
+          this.hud.feed(e.kind === 'bomb' ? `🍬 <b>${escapeHtml(giant)}</b> dropped a gobstopper on ${who}` : `🧈 <b>${escapeHtml(giant)}</b> buttered the road for ${who}`, e.slot);
+          if (human(e.k)) {
+            this.hud.banner(e.k, e.kind === 'bomb' ? 'GIANT! DODGE THE RING!' : 'GIANT! BUTTER AHEAD!', 'warn', 1400);
+            this.haptic(e.k, 'bump');
+          }
+        }
+        // The giant feels it land too.
+        const pid = this.room?.players.find((p) => p.slot === e.slot)?.id;
+        if (pid) this.link.haptic(pid, 'item');
+        break;
+      }
+      case 'giantLand':
+        if (!attract && e.kind === 'butter' && this.nearness(e.x, e.z) > 0.2) play('squash', 0, 0.6);
+        break;
     }
+  }
+
+  // ---------------------------------------------------------------- the Giant's Hand
+
+  /** Players who are the giant now: in the room with a phone, and not racing (finished, or not in this race). */
+  private giantIds(race: Race): string[] {
+    if (this.attract || !this.settings?.giants || this.state.phase !== 'race' || !this.room) return [];
+    return this.room.players
+      .filter((p) => !p.local && p.connected)
+      .filter((p) => {
+        const i = this.kartPid.indexOf(p.id);
+        return i < 0 || race.karts[i].finished;
+      })
+      .map((p) => p.id);
+  }
+
+  /** Giants' charges refill as the race runs. A new giant starts with two, so they can act straight away. */
+  private chargeGiants(race: Race) {
+    if (race.time < 0) return;
+    for (const id of this.giantIds(race)) {
+      const c = this.giantCharge.get(id) ?? 2;
+      this.giantCharge.set(id, Math.min(GIANT_MAX_CHARGE, c + STEP / GIANT_RECHARGE));
+    }
+  }
+
+  private giantMove({ pid, kind, target }: GiantMove & { pid: string }) {
+    const race = this.race;
+    if (!race || this.state.paused || !this.giantIds(race).includes(pid)) return;
+    const charge = this.giantCharge.get(pid) ?? 0;
+    if (charge < GIANT_COST[kind]) return;
+    const slot = this.room?.players.find((p) => p.id === pid)?.slot ?? 0;
+    if (!race.giant(kind, target, slot)) return;
+    this.giantCharge.set(pid, charge - GIANT_COST[kind]);
+    const own = this.kartPid.indexOf(pid);
+    if (own >= 0) this.giantPicked.set(own, target);
+    // Show the new charge at once rather than on the next dashboard beat.
+    this.hudSent.delete(pid);
+  }
+
+  /**
+   * A finished player's view on the TV stops following their own kart crawling home and follows the action
+   * instead: the racer they last picked, or else the nearest one still going.
+   */
+  private followForGiants(race: Race) {
+    const giants = new Set(this.giantIds(race));
+    for (const k of race.karts) {
+      if (k.cpu) continue;
+      const pid = this.kartPid[k.index];
+      let follow = k.index;
+      if (pid && giants.has(pid)) {
+        const picked = this.giantPicked.get(k.index);
+        const going = race.karts.filter((o) => !o.finished);
+        if (picked !== undefined && !race.karts[picked].finished) follow = picked;
+        else if (going.length) follow = going.reduce((a, b) => (Math.abs(b.dist - k.dist) < Math.abs(a.dist - k.dist) ? b : a)).index;
+      }
+      this.view.follow(k.index, follow);
+    }
+  }
+
+  private giantHud(race: Race, id: string): GiantHud {
+    const endsIn = race.closingIn;
+    return {
+      charge: Math.floor((this.giantCharge.get(id) ?? 2) * 20) / 20,
+      endsIn: endsIn === null ? null : Math.ceil(endsIn),
+      targets: race.karts
+        .filter((k) => !k.finished)
+        .sort((a, b) => a.place - b.place)
+        .map((k) => ({ k: k.index, name: k.name, character: k.character, place: k.place, cpu: k.cpu, slot: k.slot, safe: !race.giantCanTarget(k) })),
+    };
   }
 
   // ---------------------------------------------------------------- engines and phones
@@ -724,18 +842,33 @@ export class Director {
 
   private sendHuds(race: Race) {
     const out: Record<string, PhoneHud> = {};
+    const giants = new Set(this.giantIds(race));
+    const send = (pid: string, hud: PhoneHud) => {
+      const key = JSON.stringify(hud);
+      if (this.hudSent.get(pid) === key) return;
+      this.hudSent.set(pid, key);
+      out[pid] = hud;
+    };
     for (const k of race.karts) {
       const pid = this.kartPid[k.index];
       if (!pid || this.room?.players.find((p) => p.id === pid)?.local) continue;
-      const hud: PhoneHud = {
+      // Warn a racer about what a giant has aimed at them, and show a flick while it lasts.
+      const falling = race.giants.find((g) => g.target === k.index);
+      send(pid, {
         place: k.place, racers: race.karts.length, lap: race.lapOf(k), laps: race.laps, item: k.rollT > 0 ? null : k.item,
         count: k.itemCount, rolling: k.rollT > 0, finished: k.finished, time: k.finishTime !== null ? k.finishTime * 1000 : null,
         charge: k.driftLevel, stage: race.time < 0 ? 'countdown' : k.finished ? 'done' : 'go', stunned: k.stunned, wrongWay: k.wrongWayT > 1,
-      };
-      const key = JSON.stringify(hud);
-      if (this.hudSent.get(pid) === key) continue;
-      this.hudSent.set(pid, key);
-      out[pid] = hud;
+        incoming: falling ? falling.kind : race.time < this.flickedUntil[k.index] ? 'flick' : null,
+        giant: giants.has(pid) ? this.giantHud(race, pid) : null,
+      });
+    }
+    // Giants without a kart in this race (they joined late) get a dashboard of their own.
+    for (const pid of giants) {
+      if (this.kartPid.includes(pid)) continue;
+      send(pid, {
+        place: 0, racers: race.karts.length, lap: 0, laps: race.laps, item: null, count: 0, rolling: false, finished: false, time: null,
+        charge: 0, stage: race.time < 0 ? 'countdown' : 'go', stunned: false, wrongWay: false, giant: this.giantHud(race, pid),
+      });
     }
     if (Object.keys(out).length) this.link.huds(out);
   }
@@ -759,3 +892,4 @@ function shuffle<T>(a: T[]): T[] {
   }
   return out;
 }
+

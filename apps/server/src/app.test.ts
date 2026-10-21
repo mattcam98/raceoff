@@ -115,6 +115,30 @@ describe('play', () => {
     expect(count).toBe(1);
   });
 
+  it('relays a giant’s move to the TV, stamped, and drops malformed ones', async () => {
+    const { code, tv } = await room();
+    const join = await post<{ token: string; playerId: string }>(`/api/rooms/${code}/join`, { name: 'Gia' });
+    const phone = await open({ role: 'player', code, token: join.body.token });
+    const moves: unknown[] = [];
+    tv.on('giant', (m) => moves.push(m));
+    phone.emit('p:giant', { kind: 'nuke', target: 1 } as never);
+    phone.emit('p:giant', { kind: 'bomb', target: 99 });
+    phone.emit('p:giant', { kind: 'butter', target: 3 });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(moves).toEqual([{ kind: 'butter', target: 3, pid: join.body.playerId }]);
+  });
+
+  it('keeps settings a change does not mention: turning the Giant’s Hand off sticks', async () => {
+    const { code, tv } = await room();
+    const join = await post<{ token: string }>(`/api/rooms/${code}/join`, { name: 'Host' });
+    const vip = await open({ role: 'player', code, token: join.body.token });
+    vip.emit('p:settings', { giants: false });
+    await next(tv, 'room', (v) => !v.settings.giants);
+    vip.emit('p:settings', { laps: 4 });
+    const [view] = await next(tv, 'room', (v) => v.settings.laps === 4);
+    expect(view.settings.giants).toBe(false);
+  });
+
   it('lets only the first phone change settings and send commands', async () => {
     const { code, tv } = await room();
     const a = await post<{ token: string }>(`/api/rooms/${code}/join`, { name: 'First' });

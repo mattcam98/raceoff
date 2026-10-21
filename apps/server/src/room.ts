@@ -7,7 +7,7 @@
  * only ever speak for its own player, and only the VIP can change settings.
  */
 import {
-  BodyIdSchema, CharacterIdSchema, CHARACTERS, HAPTIC_KINDS, IDLE_STATUS, InputSchema, MAX_PLAYERS, MenuCommandSchema,
+  BodyIdSchema, CharacterIdSchema, CHARACTERS, GiantMoveSchema, HAPTIC_KINDS, IDLE_STATUS, InputSchema, MAX_PLAYERS, MenuCommandSchema,
   NameSchema, PickSchema, RaceReportSchema, RoomSettingsPatchSchema, RoomSettingsSchema,
   type ClientToServerEvents, type GameStatus, type HapticKind, type Hud, type LiveRoomView, type PlayerInfo, type RoomSettings, type RoomView,
   type ServerToClientEvents,
@@ -329,6 +329,12 @@ export class Room {
       const cmd = MenuCommandSchema.safeParse(raw);
       if (!cmd.success || this.vip !== playerId || !this.tv) return;
       this.tv.emit('command', { pid: playerId, cmd: cmd.data });
+    });
+    // A giant's move goes to the TV, which runs the race and decides whether it can happen.
+    socket.on('p:giant', (raw) => {
+      const move = GiantMoveSchema.safeParse(raw);
+      if (!move.success || !this.tv) return;
+      this.tv.emit('giant', { ...move.data, pid: playerId });
     });
     socket.on('p:leave', () => this.remove(playerId, 'left'));
     socket.on('disconnect', () => {

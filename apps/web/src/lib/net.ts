@@ -6,7 +6,7 @@
  */
 import {
   IDLE_STATUS, type AdminStatus, type AdminView, type ClientToServerEvents, type ServerSettings, type CreateRoomResponse, type GameStatus, type HapticKind, type Hud, type JoinResponse,
-  type MenuCommand, type RelayedInput, type RoomView, type ServerToClientEvents,
+  type GiantKind, type GiantMove, type MenuCommand, type RelayedInput, type RoomView, type ServerToClientEvents,
 } from '@raceoff/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { io, type Socket } from 'socket.io-client';
@@ -105,11 +105,13 @@ abstract class Link {
 export class TvLink extends Link {
   onInput: (input: RelayedInput) => void = () => {};
   onCommand: (cmd: { pid: string; cmd: MenuCommand }) => void = () => {};
+  onGiant: (move: GiantMove & { pid: string }) => void = () => {};
 
   constructor(code: string, key: string) {
     super({ role: 'tv', code, key });
     this.socket.on('input', (i) => this.onInput(i));
     this.socket.on('command', (c) => this.onCommand(c));
+    this.socket.on('giant', (m) => this.onGiant(m));
   }
 
   settings = (patch: Parameters<ClientToServerEvents['tv:settings']>[0]) => this.socket.emit('tv:settings', patch);
@@ -164,6 +166,7 @@ export class PhoneLink extends Link {
   command = (cmd: MenuCommand) => this.socket.emit('p:command', cmd);
   rename = (name: string) => this.socket.emit('p:rename', name);
   leave = () => this.socket.emit('p:leave');
+  giant = (kind: GiantKind, target: number) => this.socket.emit('p:giant', { kind, target });
 }
 
 export function useLink<L extends Link>(link: L | null): LinkSnapshot | null {

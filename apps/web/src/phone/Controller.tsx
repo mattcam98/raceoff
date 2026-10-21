@@ -8,11 +8,12 @@
  * unless that is turned off. Input lives in refs and goes out on a fixed
  * beat, so touches never wait on React.
  */
-import { BTN, itemById, PLAYER_LABELS, type GameStatus, type Hud, type PlayerInfo } from '@raceoff/shared';
+import { BTN, itemById, PLAYER_LABELS, type GameStatus, type GiantKind, type Hud, type PlayerInfo } from '@raceoff/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PhoneLink } from '../lib/net';
 import { prefs } from '../lib/storage';
 import { ITEM_ICONS, ROULETTE_ORDER, ordinal, suffix } from '../ui/art';
+import { GiantPanel } from './Giant';
 import { buzz, canVibrate, hapticsOn, setHaptics } from './haptics';
 
 type SteerMode = 'touch' | 'tilt' | 'buttons';
@@ -24,6 +25,13 @@ interface OrientationEventCtor {
 /** iPhones ask permission for motion on every page load, and only from a tap. */
 const motionNeedsTap = () =>
   typeof (window as unknown as { DeviceMotionEvent?: OrientationEventCtor }).DeviceMotionEvent?.requestPermission === 'function';
+
+/** What a racer's phone says when a giant picks them. */
+const INCOMING: Record<GiantKind, string> = {
+  butter: '🖐 Giant! Butter ahead',
+  bomb: '🖐 Gobstopper! Dodge the ring',
+  flick: '👉 Flicked forward!',
+};
 
 const SEND_MS = 33;
 const HEARTBEAT_MS = 120;
@@ -410,12 +418,21 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       </section>
 
       {hud?.wrongWay && <div className="pad__banner pad__banner--warn">Wrong way!</div>}
-      {finished && (
-        <div className="pad__finish">
-          <b>{ordinal(hud!.place)}</b>
-          <span>Finished! Watch the TV.</span>
-        </div>
+      {hud?.incoming && !finished && (
+        <div className={`pad__banner pad__banner--giant pad__banner--${hud.incoming === 'flick' ? 'good' : 'warn'}`}>{INCOMING[hud.incoming]}</div>
       )}
+      {finished &&
+        (hud?.giant ? (
+          // Done racing: now the giant.
+          <div className="pad__giant">
+            <GiantPanel link={link} giant={hud.giant} place={hud.place} vip={vip} />
+          </div>
+        ) : (
+          <div className="pad__finish">
+            <b>{ordinal(hud!.place)}</b>
+            <span>Finished! Watch the TV.</span>
+          </div>
+        ))}
 
       <section
         className={`pad__steer${steering ? ' is-steering' : ''}`}

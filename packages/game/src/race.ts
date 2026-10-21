@@ -5,12 +5,12 @@
  * screens or networks: inputs arrive as plain objects, and everything worth
  * a sound or an effect is pushed onto `events` for whoever is watching.
  */
-import type { ItemId } from '@raceoff/shared';
+import type { GiantKind, ItemId } from '@raceoff/shared';
 import { AiDriver, type Difficulty } from './ai';
 import { hazardAt, type HazardState } from './hazards';
 import {
-  BALL_RADIUS, BLAST_RADIUS, drawItem, itemRank, OIL_RADIUS, ORBIT_RADIUS, usesOf,
-  type Blast, type Drop, type ItemMode, type Projectile,
+  BALL_RADIUS, BLAST_RADIUS, drawItem, GIANT_BLAST_RADIUS, GIANT_FALL, GIANT_FLICK, GIANT_PROTECT, itemRank, OIL_RADIUS, ORBIT_RADIUS, usesOf,
+  type Blast, type Drop, type GiantDrop, type ItemMode, type Projectile,
 } from './items';
 import { BOOST_KICK, collideStatic, GRAVITY, Kart, KART_RADIUS, NO_INPUT, STEP, stepKart, type KartInput, type StepEvents, type StunKind } from './kart';
 import { clamp, fwdX, fwdZ, headingOf, lerp, rightX, rightZ, rng, wrapAngle, type Rng } from './math';
@@ -36,6 +36,11 @@ export interface RaceConfig {
   items: ItemMode;
   difficulty: Difficulty;
   seed: number;
+  /**
+   * Seconds the race keeps going after the last human finishes, for the Giant's Hand: finished players can
+   * still reach in while the computers race home. 0 (the default) calls the race soon after the humans are in.
+   */
+  giantTime?: number;
 }
 
 export type HitHow = 'ball' | 'seeker' | 'oil' | 'blast' | 'hazard' | 'star' | 'orbit' | 'squash' | 'rocket';
@@ -50,7 +55,7 @@ export type RaceEvent =
   | { t: 'hit'; k: number; by: number; how: HitHow }
   | { t: 'shield'; k: number }
   | { t: 'blast'; x: number; y: number; z: number }
-  | { t: 'boost'; k: number; kind: 'drift' | 'pad' | 'trick' | 'start' | 'nitro' | 'draft'; level: number }
+  | { t: 'boost'; k: number; kind: 'drift' | 'pad' | 'trick' | 'start' | 'nitro' | 'draft' | 'flick'; level: number }
   | { t: 'drift'; k: number; on: boolean }
   | { t: 'wall'; k: number; strength: number }
   | { t: 'bump'; a: number; b: number; strength: number }
@@ -59,7 +64,10 @@ export type RaceEvent =
   | { t: 'respawn'; k: number }
   | { t: 'lap'; k: number; lap: number; time: number }
   | { t: 'finish'; k: number; place: number; time: number }
-  | { t: 'pop'; x: number; y: number; z: number };
+  | { t: 'pop'; x: number; y: number; z: number }
+  /** A giant picked racer k: something is falling toward them, or they were flicked forward. */
+  | { t: 'giant'; kind: GiantKind; k: number; slot: number }
+  | { t: 'giantLand'; kind: 'butter' | 'bomb'; x: number; y: number; z: number };
 
 export const CC_SCALE = { 50: 0.8, 100: 1, 150: 1.17 } as const;
 
@@ -120,6 +128,8 @@ export class Race {
   projectiles: Projectile[] = [];
   drops: Drop[] = [];
   blasts: Blast[] = [];
+  /** What giants are dropping in, still falling. */
+  giants: GiantDrop[] = [];
   hazards: HazardState[];
   /** Set when the race is over and results can be shown. */
   over = false;
@@ -131,6 +141,8 @@ export class Race {
   private startPress: number[];
   private respawnTo: ({ x: number; y: number; z: number; h: number; s: number } | null)[];
   private stall: number[];
+  /** Race time from which a giant can pick each racer again. */
+  private giantSafe: number[];
   private ev: StepEvents;
   private scratch: Collider[] = [];
 
@@ -157,6 +169,7 @@ export class Race {
     this.startPress = this.karts.map(() => NaN);
     this.respawnTo = this.karts.map(() => null);
     this.stall = this.karts.map(() => 0);
+    this.giantSafe = this.karts.map(() => 0);
     this.boxes = this.track.boxes.map((b) => ({ x: b.x, y: b.y, z: b.z, respawn: 0 }));
     this.hazards = this.track.hazards.map((h) => hazardAt(h, 0));
     this.ev = {
@@ -242,6 +255,7 @@ export class Race {
     this.boxesStep(dt);
     this.projectilesStep(dt);
     this.dropsStep(dt);
+    this.giantsStep(dt);
     this.hazardsStep();
     // Bumps and hazards push karts about; walls get the last word, so nothing is ever shoved through one.
     for (const k of this.karts) if (k.respawnT === 0) collideStatic(k, this.track, this.ev);
@@ -584,16 +598,72 @@ export class Race {
     return out;
   }
 
-  private explode(x: number, y: number, z: number, by: number) {
-    this.blasts.push({ id: this.id(), x, y, z, r: BLAST_RADIUS, age: 0 });
+  private explode(x: number, y: number, z: number, by: number, r = BLAST_RADIUS) {
+    this.blasts.push({ id: this.id(), x, y, z, r, age: 0 });
     this.events.push({ t: 'blast', x, y, z });
     for (const k of this.karts) {
-      if (Math.hypot(k.x - x, k.z - z) < BLAST_RADIUS && Math.abs(k.y - y) < 8) this.hit(k, 'tumble', 'blast', by);
+      if (Math.hypot(k.x - x, k.z - z) < r && Math.abs(k.y - y) < 8) this.hit(k, 'tumble', 'blast', by);
     }
-    for (const d of this.drops) if (!d.dead && Math.hypot(d.x - x, d.z - z) < BLAST_RADIUS) d.dead = true;
+    for (const d of this.drops) if (!d.dead && Math.hypot(d.x - x, d.z - z) < r) d.dead = true;
     for (const p of this.projectiles) {
-      if (!p.dead && p.kind !== 'plane' && Math.hypot(p.x - x, p.z - z) < BLAST_RADIUS) p.dead = true;
+      if (!p.dead && p.kind !== 'plane' && Math.hypot(p.x - x, p.z - z) < r) p.dead = true;
     }
+  }
+
+  // ---------------------------------------------------------------- the Giant's Hand
+
+  /** Whether a giant can pick this racer now: racing, on the track, and not picked a moment ago. */
+  giantCanTarget(k: Kart) {
+    return this.time >= 0 && !this.over && !k.finished && k.respawnT === 0 && this.time >= this.giantSafe[k.index];
+  }
+
+  /**
+   * A giant's move on racer `target` (`slot` is the giant's player slot). Butter lands in their lane ahead of
+   * them; a gobstopper lands where they will be; a flick boosts them now. False when it cannot happen.
+   */
+  giant(kind: GiantKind, target: number, slot: number): boolean {
+    const k = this.karts[target];
+    if (!k || !this.giantCanTarget(k)) return false;
+    this.giantSafe[target] = this.time + GIANT_PROTECT;
+    this.events.push({ t: 'giant', kind, k: target, slot });
+    if (kind === 'flick') {
+      // A flick is a shove from a giant finger: the boost arrives with a kick, like a pad.
+      k.giveBoost(GIANT_FLICK.seconds, GIANT_FLICK.mul, BOOST_KICK);
+      this.events.push({ t: 'boost', k: target, kind: 'flick', level: 2 });
+      return true;
+    }
+    const fall = GIANT_FALL[kind];
+    // Butter goes down a little further on, so it is waiting in the lane; a gobstopper goes where they will be.
+    const spot = this.spotAhead(k, kind === 'butter' ? fall + 0.7 : fall);
+    this.giants.push({ id: this.id(), kind, slot, target, x: spot.x, y: spot.y, z: spot.z, age: 0, fall });
+    return true;
+  }
+
+  /** Where a racer will be in `lead` seconds: along the road at their speed, in the lane they are in. */
+  private spotAhead(k: Kart, lead: number) {
+    const here = this.track.sampleAt(k.s);
+    const lat = (k.x - here.x) * rightX(here.h) + (k.z - here.z) * rightZ(here.h);
+    const off = clamp(lat / Math.max(1, here.w / 2 - 2), -1, 1);
+    const s = k.s + Math.max(10, Math.max(0, k.speed) * lead);
+    let p = this.track.pointAt(s, off);
+    // Never into a gap or the water: the middle of the road there instead.
+    const under = this.track.grid.surfaceAt(p.x, p.z);
+    if (under === SURF.void || under === SURF.water) p = this.track.pointAt(s, 0);
+    return p;
+  }
+
+  private giantsStep(dt: number) {
+    for (const g of this.giants) {
+      g.age += dt;
+      if (g.age < g.fall) continue;
+      if (g.kind === 'butter') {
+        this.drops.push({ id: this.id(), kind: 'butter', owner: -1, x: g.x, y: g.y, z: g.z, age: 0, fuse: 0, dead: false });
+      } else {
+        this.explode(g.x, g.y, g.z, -1, GIANT_BLAST_RADIUS);
+      }
+      this.events.push({ t: 'giantLand', kind: g.kind, x: g.x, y: g.y, z: g.z });
+    }
+    this.giants = this.giants.filter((g) => g.age < g.fall);
   }
 
   private projectilesStep(dt: number) {
@@ -806,8 +876,9 @@ export class Race {
     for (const d of this.drops) {
       if (d.dead) continue;
       d.age += dt;
-      if (d.kind === 'oil') {
-        if (d.age > 30) d.dead = true;
+      if (d.kind === 'oil' || d.kind === 'butter') {
+        // A giant's butter melts sooner than an oil slick dries.
+        if (d.age > (d.kind === 'butter' ? 20 : 30)) d.dead = true;
         for (const k of this.karts) {
           if (k.index === d.owner && d.age < 0.8) continue;
           if (!k.grounded || k.respawnT > 0) continue;
@@ -1091,11 +1162,21 @@ export class Race {
     }
   }
 
+  /** The race keeps going for the giants, until the computers are home or this time. Null when not. */
+  private giantsUntil: number | null = null;
+
   private checkEnd() {
     if (this.over) return;
     const humans = this.humans;
     const allHumansDone = humans.length > 0 && humans.every((k) => k.finished);
     const everyoneDone = this.karts.every((k) => k.finished);
+    const giantTime = this.config.giantTime ?? 0;
+    if (this.endAt === null && allHumansDone && !everyoneDone && giantTime > 0) {
+      // Everyone with a phone is a giant now: give them the rest of the race to play in.
+      this.giantsUntil ??= this.time + giantTime;
+      if (this.time < this.giantsUntil) return;
+      this.endAt = this.time;
+    }
     if (this.endAt === null && (allHumansDone || everyoneDone)) this.endAt = this.time + END_DELAY;
     if (this.endAt === null && this.firstHumanFinish !== null && this.time > this.firstHumanFinish + FINISH_GRACE) this.endAt = this.time;
     // A race with nobody finishing (everyone driving backwards, a computer-only test) is called eventually.
@@ -1108,8 +1189,15 @@ export class Race {
 
   /** Seconds left before an unfinished race is called, if a countdown is running. */
   get closingIn(): number | null {
-    if (this.over || this.firstHumanFinish === null) return null;
-    if (this.humans.every((k) => k.finished)) return null;
+    if (this.over) return null;
+    // The giants' time, once every human is home.
+    if (this.giantsUntil !== null) return this.endAt === null ? Math.max(0, this.giantsUntil - this.time) : null;
+    if (this.firstHumanFinish === null || this.humans.every((k) => k.finished)) return null;
     return Math.max(0, this.firstHumanFinish + FINISH_GRACE - this.time);
+  }
+
+  /** Call the race now, if every human is home: the host is done watching the giants play. */
+  endNow() {
+    if (!this.over && this.endAt === null && this.humans.every((k) => k.finished)) this.endAt = this.time;
   }
 }

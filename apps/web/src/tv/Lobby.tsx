@@ -157,6 +157,9 @@ export function Lobby({ director, link, room }: { director: Director; link: TvLi
                 <Row label="Screen">
                   <Seg value={s.camera} options={[['split', 'Split'], ['shared', 'Shared']]} onChange={(camera) => set({ camera })} />
                 </Row>
+                <Row label="Giant's Hand">
+                  <Seg value={s.giants ? 'on' : 'off'} options={[['on', 'On'], ['off', 'Off']]} onChange={(v) => set({ giants: v === 'on' })} />
+                </Row>
               </div>
             </div>
           ) : records ? (
