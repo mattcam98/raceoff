@@ -55,7 +55,7 @@ function planeModel() {
   ]);
   shape.setAttribute('position', new THREE.BufferAttribute(v, 3));
   shape.computeVertexNormals();
-  const m = new THREE.Mesh(shape, new THREE.MeshLambertMaterial({ color: '#ffffff', side: THREE.DoubleSide }));
+  const m = new THREE.Mesh(shape, new THREE.MeshStandardMaterial({ color: '#ffffff', side: THREE.DoubleSide, roughness: 0.7 }));
   m.castShadow = true;
   const g = group(m);
   g.add(at(box(0.05, 0.4, 1.2, '#ff4d6d'), 0, -0.3, -0.6));
@@ -64,7 +64,7 @@ function planeModel() {
 }
 
 function oilModel() {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(OIL_RADIUS * 2.3, OIL_RADIUS * 2.3).rotateX(-Math.PI / 2), new THREE.MeshPhongMaterial({ map: tex.puddle('#16161d'), transparent: true, shininess: 120, specular: new THREE.Color('#8a7dff'), depthWrite: false }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(OIL_RADIUS * 2.3, OIL_RADIUS * 2.3).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ map: tex.puddle('#16161d'), transparent: true, roughness: 0.05, metalness: 0.2, iridescence: 1, iridescenceIOR: 1.6, depthWrite: false }));
   m.renderOrder = 3;
   return m;
 }
@@ -83,7 +83,7 @@ function butterPat() {
 function butterModel() {
   const puddle = new THREE.Mesh(
     new THREE.PlaneGeometry(OIL_RADIUS * 2.3, OIL_RADIUS * 2.3).rotateX(-Math.PI / 2),
-    new THREE.MeshPhongMaterial({ map: tex.puddle('#f5c938'), transparent: true, shininess: 140, specular: new THREE.Color('#fff6c8'), depthWrite: false }),
+    new THREE.MeshStandardMaterial({ map: tex.puddle('#f5c938'), transparent: true, roughness: 0.12, depthWrite: false }),
   );
   puddle.renderOrder = 3;
   const pat = butterPat();
@@ -109,7 +109,7 @@ function handModel() {
   thumb.position.set(4.1, -0.9, 1.4);
   thumb.rotation.set(Math.PI / 2, 0, -0.95);
   g.add(thumb);
-  const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(3.7, 3.9, 6, 18).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#ffffff' }));
+  const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(3.7, 3.9, 6, 18).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.85 }));
   sleeve.position.set(0, 0.4, -6.4);
   g.add(sleeve);
   g.traverse((o) => (o.castShadow = true));
@@ -209,7 +209,7 @@ export class ItemsView {
     const n = race.boxes.length;
     this.boxes = new THREE.InstancedMesh(
       new THREE.BoxGeometry(2.4, 2.4, 2.4),
-      new THREE.MeshPhongMaterial({ map: tex.itemBox(), transparent: true, opacity: 0.88, shininess: 90, emissive: new THREE.Color('#40306a'), emissiveIntensity: 0.4 }),
+      new THREE.MeshStandardMaterial({ map: tex.itemBox(), transparent: true, opacity: 0.88, roughness: 0.15, emissive: new THREE.Color('#40306a'), emissiveIntensity: 0.4 }),
       Math.max(1, n),
     );
     this.boxCores = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.75), new THREE.MeshBasicMaterial({ color: '#fff6c8' }), Math.max(1, n));
@@ -353,7 +353,7 @@ export class ItemsView {
     (beam.material as THREE.MeshBasicMaterial).opacity = 0.14 + 0.12 * Math.abs(Math.sin(t * 9));
     hand.position.set(g.x, handY + 2.6, g.z);
     hand.rotation.set(0, (g.id * 2.39) % (Math.PI * 2), 0);
-    (hand.userData.sleeve as THREE.MeshLambertMaterial).color.set(PLAYER_COLORS[g.slot] ?? '#ffffff');
+    (hand.userData.sleeve as THREE.MeshStandardMaterial).color.set(PLAYER_COLORS[g.slot] ?? '#ffffff');
 
     const held = bomb ? candy : butter;
     (bomb ? butter : candy).visible = false;

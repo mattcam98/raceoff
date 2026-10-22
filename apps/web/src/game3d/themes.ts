@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import type { Track } from '@raceoff/game';
 import { at, box, cyl, group, mat } from './kit';
+import type { Grade } from './post';
 import { buildProp } from './props';
 import { tex } from './textures';
 
@@ -29,14 +30,22 @@ export interface Theme {
   backdrop: (track: Track) => THREE.Object3D;
   /** Night tracks get lamps and glowing bits. */
   night?: boolean;
+  /**
+   * The photographic look: how strong the room's reflected light, the sky light and the sun are (multiples
+   * of the values above), and the colour grade.
+   */
+  look: { env: number; hemi: number; sun: number; grade: Grade };
 }
+
+const DAY: Theme['look'] = { env: 0.55, hemi: 0.15, sun: 1.15, grade: { saturation: 1.12, contrast: 1.06, tint: '#ffffff', vignette: 0.32, bloom: 0.5, dof: 4.5 } };
+const lookWith = (grade: Partial<Grade>, o: Partial<Omit<Theme['look'], 'grade'>> = {}): Theme['look'] => ({ ...DAY, ...o, grade: { ...DAY.grade, ...grade } });
 
 /** A material of its own, not a cached one: its texture copy is made for one world and freed with it. */
 function texMat(t: THREE.Texture, repeat: number, size: number, color = '#ffffff') {
   const tt = t.clone();
   tt.needsUpdate = true;
   tt.repeat.set(size / repeat, size / repeat);
-  return new THREE.MeshLambertMaterial({ color, map: tt });
+  return new THREE.MeshStandardMaterial({ color, map: tt, roughness: 0.85 });
 }
 
 /** The table or desk the track sits on: its top is the floor, and it stands in a room far below. */
@@ -96,7 +105,7 @@ function clothDrape() {
   const t = tex.gingham('#e8414b', '#ffffff').clone();
   t.needsUpdate = true;
   t.repeat.set(9, 0.8);
-  return new THREE.MeshLambertMaterial({ color: '#ffffff', map: t, side: THREE.DoubleSide });
+  return new THREE.MeshStandardMaterial({ color: '#ffffff', map: t, side: THREE.DoubleSide, roughness: 0.9 });
 }
 
 export const THEMES: Record<string, Theme> = {
@@ -113,6 +122,7 @@ export const THEMES: Record<string, Theme> = {
     roughRoad: () => mat('#ffffff', { map: tex.gingham('#e8414b', '#ffffff') }),
     curb: ['#e63946', '#ffffff'],
     wall: 'sugar',
+    look: lookWith({ tint: '#fff4e6', saturation: 1.12 }),
     backdrop: (t) =>
       tableRoom(t, clothDrape(), mat('#ffffff', { map: tex.wood('#b07a47', '#8a5a2e', 3) }), texMat(tex.checkerFloor('#f2efe6', '#3a3f5c'), 60, 1600), mat('#ffe0b8'), (g, f) => {
         // A chair pulled up to the table and a window with morning light.
@@ -137,6 +147,7 @@ export const THEMES: Record<string, Theme> = {
     roughRoad: () => mat('#ffffff', { map: tex.paper() }),
     curb: ['#3d9bff', '#ffffff'],
     wall: 'pencil',
+    look: lookWith({ tint: '#f6f7ff' }),
     backdrop: (t) =>
       tableRoom(t, null, mat('#ffffff', { map: tex.wood('#8a5d36', '#5e3d20', 3) }), texMat(tex.carpet('#58607a', '#6a7390'), 30, 1600), mat('#d9e2ff'), (g) => {
         g.add(at(buildProp('window'), 0, 140, -618));
@@ -157,11 +168,12 @@ export const THEMES: Record<string, Theme> = {
     roughRoad: () => mat('#ffffff', { map: tex.stripes('#9ee1ff', '#ffffff', 10) }),
     curb: ['#ff8fab', '#ffffff'],
     wall: 'soap',
+    look: lookWith({ tint: '#f2fbff', saturation: 1.08, bloom: 0.4 }),
     backdrop: () => {
       const g = new THREE.Group();
       const wall = mat('#ffffff', { map: tex.tiles('#d4f1f7', '#9fc2cc', 4) });
       for (const [x, z, ry] of [[0, -520, 0], [0, 520, Math.PI], [-520, 0, Math.PI / 2], [520, 0, -Math.PI / 2]] as [number, number, number][]) {
-        const t = (wall as THREE.MeshLambertMaterial).map!.clone();
+        const t = (wall as THREE.MeshStandardMaterial).map!.clone();
         t.needsUpdate = true;
         t.repeat.set(40, 20);
         const wm = new THREE.Mesh(new THREE.PlaneGeometry(1100, 600), mat('#ffffff', { map: t }));
@@ -186,6 +198,7 @@ export const THEMES: Record<string, Theme> = {
     roughRoad: () => mat('#ffffff', { map: tex.sand() }),
     curb: ['#ff7a1a', '#ffffff'],
     wall: 'stone',
+    look: lookWith({ tint: '#fffaf0', saturation: 1.15 }, { sun: 1.2 }),
     backdrop: () => {
       const g = new THREE.Group();
       for (let i = 0; i < 26; i++) {
@@ -213,6 +226,7 @@ export const THEMES: Record<string, Theme> = {
     roughRoad: () => mat('#ffffff', { map: tex.rug() }),
     curb: ['#ffd23f', '#3d9bff'],
     wall: 'block',
+    look: lookWith({ tint: '#fff2fb', saturation: 1.14 }),
     backdrop: () => {
       const g = new THREE.Group();
       const wp = tex.starsWallpaper().clone();
@@ -244,6 +258,7 @@ export const THEMES: Record<string, Theme> = {
     curb: ['#ffd23f', '#1b1b1f'],
     wall: 'tire',
     night: true,
+    look: lookWith({ tint: '#e4ecff', contrast: 1.1, vignette: 0.45, bloom: 0.6 }, { env: 0.5, hemi: 0.35, sun: 1 }),
     backdrop: () => {
       const g = new THREE.Group();
       const wall = mat('#4b4f63');

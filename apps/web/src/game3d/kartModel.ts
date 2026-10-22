@@ -25,22 +25,23 @@ export interface KartRig {
   tag: THREE.Sprite | null;
   rocket: THREE.Object3D;
   /** Body materials that flash during a Sugar Rush. */
-  paint: THREE.MeshPhongMaterial[];
+  paint: THREE.MeshStandardMaterial[];
   wheelRadius: number;
 }
 
 const DARK = mat('#22232b', { shiny: 8 });
-const CHROME = mat('#d7dce4', { shiny: 120 });
+const CHROME = mat('#e4e8ee', { shiny: 110, metal: 1 });
 const SEAT = mat('#2b2d3a', { shiny: 10 });
 
+/** Glossy toy paint with a clear lacquer over it, so it catches the room's light like a die-cast car. */
 function paintMat(color: string) {
-  return new THREE.MeshPhongMaterial({ color: new THREE.Color(color), shininess: 70, specular: new THREE.Color('#555555') });
+  return new THREE.MeshPhysicalMaterial({ color: new THREE.Color(color), roughness: 0.42, clearcoat: 1, clearcoatRoughness: 0.12 });
 }
 
 /** A wheel in one draw: tyre, hub and a notch that shows it turning, all in the same finish so they merge. */
 function wheel(r: number, width: number, hubColor: string) {
   const w = new THREE.Group();
-  const finish = (c: string) => new THREE.MeshPhongMaterial({ color: c, shininess: 30 });
+  const finish = (c: string) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 });
   const tire = new THREE.Mesh(new THREE.CylinderGeometry(r, r, width, 18), finish('#22232b'));
   tire.rotation.z = Math.PI / 2;
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r * 0.55, width + 0.04, 12), finish(hubColor));
@@ -318,10 +319,10 @@ export function buildKart(character: { id: string; color: string; accent: string
   body.clear();
   for (const c of [...baked.children]) body.add(c);
   // Everything that can glow during a Sugar Rush.
-  const paint: THREE.MeshPhongMaterial[] = [];
+  const paint: THREE.MeshStandardMaterial[] = [];
   body.traverse((o) => {
-    const m = (o as THREE.Mesh).material as THREE.MeshPhongMaterial | undefined;
-    if (m && (o as THREE.Mesh).isMesh && m.isMeshPhongMaterial && !paint.includes(m)) paint.push(m);
+    const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+    if (m && (o as THREE.Mesh).isMesh && m.isMeshStandardMaterial && !paint.includes(m)) paint.push(m);
   });
 
   const shield = new THREE.Mesh(new THREE.SphereGeometry(2.1, 24, 16), shieldMaterial);

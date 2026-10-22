@@ -6,11 +6,13 @@
  */
 import * as THREE from 'three';
 import { CHARACTERS, PLAYER_COLORS, PLAYER_LABELS, characterById } from '@raceoff/shared';
-import { clamp, damp, fwdX, fwdZ, lerp, wrapAngle, SURF, type Kart, type Race, type RaceEvent, type Track } from '@raceoff/game';
+import { clamp, damp, fwdX, fwdZ, lerp, rightX, rightZ, wrapAngle, SURF, type Kart, type Race, type RaceEvent, type Track } from '@raceoff/game';
 import { Fx } from './fx';
-import { disposeTree } from './kit';
+import { environmentFor } from './env';
+import { disposeTree, mat } from './kit';
 import { ItemsView } from './items3d';
 import { buildKart, shieldUniforms, type KartRig } from './kartModel';
+import { Post, type PostView } from './post';
 import { Skids } from './skids';
 import { tex } from './textures';
 import { buildWorld, type World } from './world';
@@ -38,6 +40,13 @@ interface Chase {
   look: THREE.Vector3;
   shake: number;
   fov: number;
+  /** Camera roll into a turn, radians. */
+  roll: number;
+  /** A dip that springs back: landings and hits push the camera down. */
+  dip: number;
+  dipV: number;
+  /** Speed blur at the edges of the view, eased. */
+  blur: number;
   init: boolean;
 }
 
@@ -52,6 +61,11 @@ export class GameView {
   private sun: THREE.DirectionalLight;
   private hemi: THREE.HemisphereLight;
   private extraLights: THREE.Light[] = [];
+  private post: Post;
+  private envTarget: THREE.WebGLRenderTarget | null = null;
+  private postViews: PostView[] = [];
+  /** Slow machines lose depth of field and multisampling once lowering the resolution is not enough. */
+  private highQuality = true;
   private world: World | null = null;
   private items: ItemsView | null = null;
   private rigs: KartRig[] = [];
@@ -93,10 +107,11 @@ export class GameView {
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.toneMappingExposure = 1;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.post = new Post(this.renderer);
     this.renderer.shadowMap.autoUpdate = false;
     // The shadow map is drawn only when the scene changes; a restored context starts with it empty.
     canvas.addEventListener('webglcontextrestored', this.onContextRestored);
@@ -106,9 +121,11 @@ export class GameView {
     this.hemi = new THREE.HemisphereLight('#ffffff', '#888888', 1);
     this.sun = new THREE.DirectionalLight('#ffffff', 2);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.6;
+    this.sun.shadow.mapSize.set(4096, 4096);
+    this.sun.shadow.bias = -0.0003;
+    this.sun.shadow.normalBias = 0.35;
+    // Soft-edged shadows, like a window's light rather than a spotlight's.
+    this.sun.shadow.radius = 3;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.fx.group, this.skids.mesh);
     this.resize();
   }
@@ -130,11 +147,16 @@ export class GameView {
       const th = this.world.theme;
       this.scene.background = tex.sky(th.sky[0], th.sky[1]);
       this.scene.fog = new THREE.Fog(th.fog, th.fogNear, th.fogFar);
+      this.envTarget?.dispose();
+      this.envTarget = environmentFor(this.renderer, th);
+      this.scene.environment = this.envTarget.texture;
+      this.scene.environmentIntensity = th.look.env;
       this.hemi.color.set(th.hemi.sky);
       this.hemi.groundColor.set(th.hemi.ground);
-      this.hemi.intensity = th.hemi.intensity;
+      this.hemi.intensity = th.hemi.intensity * th.look.hemi;
       this.sun.color.set(th.sun.color);
-      this.sun.intensity = th.sun.intensity;
+      this.sun.intensity = th.sun.intensity * th.look.sun;
+      this.post.setGrade(th.look.grade);
       const b = track.bounds;
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minZ + b.maxZ) / 2;
@@ -203,7 +225,7 @@ export class GameView {
     // Each player's camera hides only their own tag.
     camera.layers.enableAll();
     if (k.slot >= 0) camera.layers.disable(1 + k.slot);
-    return { camera, kart, follow: kart, heading: k.h, pos: new THREE.Vector3(), look: new THREE.Vector3(), shake: 0, fov: 68, init: false };
+    return { camera, kart, follow: kart, heading: k.h, pos: new THREE.Vector3(), look: new THREE.Vector3(), shake: 0, fov: 68, roll: 0, dip: 0, dipV: 0, blur: 0, init: false };
   }
 
   /** Point player `kart`'s camera at `target` (their own kart to go back). A change of kart is a cut. */
@@ -237,7 +259,7 @@ export class GameView {
       const off = offsets[i];
       const x = base.x + Math.cos(base.h) * -off;
       const z = base.z - Math.sin(base.h) * -off;
-      const block = new THREE.Mesh(new THREE.BoxGeometry(5, heights[i], 5), new THREE.MeshPhongMaterial({ color: colors[i], shininess: 60 }));
+      const block = new THREE.Mesh(new THREE.BoxGeometry(5, heights[i], 5), mat(colors[i], { shiny: 60 }));
       block.position.set(x, base.y + heights[i] / 2, z);
       block.rotation.y = base.h;
       block.castShadow = block.receiveShadow = true;
@@ -276,6 +298,7 @@ export class GameView {
     this.width = w;
     this.height = h;
     this.renderer.setSize(w, h, false);
+    this.post.setSize(w, h, this.pixelRatio);
     this.relayout();
   }
 
@@ -319,6 +342,9 @@ export class GameView {
     const shakeFor = (k: number, amount: number) => {
       for (const c of this.chases) if (c.kart === k) c.shake = Math.max(c.shake, amount);
     };
+    const dipFor = (k: number, v: number) => {
+      for (const c of this.chases) if (c.follow === k) c.dipV -= v;
+    };
     switch (e.t) {
       case 'box':
         this.fx.burst(e.x, e.y, e.z, ['#ff5fa2', '#ffd23f', '#3ddc84', '#3d9bff', '#ffffff'], 26, 12, 0.5, 0.5);
@@ -327,6 +353,7 @@ export class GameView {
         const k = race.karts[e.k];
         this.fx.burst(k.x, k.y + 2, k.z, ['#ffffff', '#ffd23f'], 18, 8, 0.6, 0.6);
         shakeFor(e.k, 0.6);
+        dipFor(e.k, 5);
         break;
       }
       case 'blast':
@@ -346,6 +373,7 @@ export class GameView {
         const k = race.karts[e.k];
         for (let i = 0; i < (e.hard ? 12 : 5); i++) this.fx.dust(k.x, k.y, k.z, '#d8cfc0', 1.4);
         if (e.hard) shakeFor(e.k, 0.35);
+        dipFor(e.k, e.hard ? 7 : 3);
         break;
       }
       case 'wall':
@@ -386,6 +414,7 @@ export class GameView {
     this.time += dt;
     const race = this.race;
     if (!race || !this.world) {
+      this.renderer.setRenderTarget(null);
       this.renderer.setScissorTest(false);
       this.renderer.setClearColor('#14183a');
       this.renderer.clear();
@@ -401,23 +430,29 @@ export class GameView {
     // The sun's shadows are drawn once per frame, shared by every viewport.
     // Only the scenery casts real shadows (karts and hazards carry soft blobs), so the shadow map is drawn once
     // per track rather than every frame.
-    this.renderer.setScissorTest(true);
+    this.post.begin();
+    const views = this.postViews;
+    views.length = 0;
     let first = true;
+    const pr = this.pixelRatio;
     for (const r of this.rects) {
       const cam = this.cameraFor(r, dt);
-      const x = r.x;
-      const y = this.height - r.y - r.h;
-      this.renderer.setViewport(x, y, r.w, r.h);
-      this.renderer.setScissor(x, y, r.w, r.h);
+      // Drawing-buffer pixels, from the bottom left.
+      const v: PostView = {
+        x: Math.round(r.x * pr), y: Math.round((this.height - r.y - r.h) * pr), w: Math.round(r.w * pr), h: Math.round(r.h * pr),
+        near: cam.near, far: cam.far, focus: this.focusFor(r, cam), speed: this.speedFor(r),
+      };
+      views.push(v);
+      this.post.viewport(v);
       cam.aspect = r.w / r.h;
       cam.updateProjectionMatrix();
-      this.fx.setScale(r.h * this.pixelRatio, cam.fov);
+      this.fx.setScale(r.h * pr, cam.fov);
       this.renderer.shadowMap.needsUpdate = first && this.shadowsDirty;
       if (first) this.shadowsDirty = false;
       first = false;
       this.renderer.render(this.scene, cam);
     }
-    this.renderer.setScissorTest(false);
+    this.post.end(views, this.time);
     this.adapt(dt);
   }
 
@@ -435,6 +470,11 @@ export class GameView {
     this.frameTimes = [];
     const max = Math.min(window.devicePixelRatio || 1, 1.5);
     let next = this.pixelRatio;
+    if (typical > 21 && this.pixelRatio <= 0.75 && this.highQuality) {
+      this.highQuality = false;
+      this.post.setQuality(false);
+      return;
+    }
     if (typical > 21 && this.pixelRatio > 0.6) next = Math.max(0.6, this.pixelRatio - 0.15);
     else if (typical < 17.5 && this.pixelRatio < max) next = Math.min(max, this.pixelRatio + 0.15);
     if (next !== this.pixelRatio) {
@@ -467,18 +507,21 @@ export class GameView {
     const k = this.race!.karts[c.follow];
     const rig = this.rigs[c.follow];
     const kp = rig.root.position;
-    // Follow the direction of travel, not the nose, so drifts swing the kart, not the world.
+    // Follow the direction of travel, not the nose, so drifts swing the kart, not the world. In a drift the
+    // camera trails a little more, so the kart's slide shows.
     const moving = Math.hypot(k.vx, k.vz) > 4;
     const wantHeading = moving && k.speed > -1 ? Math.atan2(k.vx, k.vz) : k.h;
+    const before = c.heading;
     if (!c.init) {
       c.heading = k.h;
     } else if (!k.stun && k.respawnT === 0) {
-      c.heading += wrapAngle(wantHeading - c.heading) * (1 - Math.exp(-5.5 * dt));
+      c.heading += wrapAngle(wantHeading - c.heading) * (1 - Math.exp(-(k.driftDir ? 4.2 : 6) * dt));
     }
-    const speed = Math.max(0, k.speed);
+    const sp = clamp(Math.max(0, k.speed) / k.params.maxSpeed, 0, 1.6);
     const boost = k.boost > 0 || k.rocket > 0;
-    const dist = 7.2 + speed * 0.05 + (boost ? 1.2 : 0);
-    const height = 3.1 + speed * 0.02;
+    // Faster pulls the camera back and up a touch; a boost pulls it further, so the kart surges away from it.
+    const dist = 6.4 + sp * 1.4 + (boost ? 1.4 : 0) + (k.rocket > 0 ? 1 : 0);
+    const height = 2.75 + sp * 0.55;
     // A drift's hop is a little bounce under a steady camera: hold the height of the ground through it, so the
     // view does not bob on every drift. Real jumps are followed as before.
     const baseY = k.hopping ? Math.min(kp.y, k.groundY) : kp.y;
@@ -494,15 +537,25 @@ export class GameView {
     c.pos.x = damp(c.pos.x, want.x, 12, dt);
     c.pos.z = damp(c.pos.z, want.z, 12, dt);
     c.pos.y = damp(c.pos.y, want.y, 6, dt);
-    const lookAhead = 3.5;
+    // Look a little ahead, and into the corner while drifting, so the way out of the bend is in view.
+    const lookAhead = 3.5 + sp * 1.5;
+    const inside = k.driftDir * 1.3;
     c.look.set(
-      damp(c.look.x, kp.x + Math.sin(c.heading) * lookAhead, 16, dt),
-      damp(c.look.y, baseY + 1.5, 8, dt),
-      damp(c.look.z, kp.z + Math.cos(c.heading) * lookAhead, 16, dt),
+      damp(c.look.x, kp.x + Math.sin(c.heading) * lookAhead + rightX(c.heading) * inside, 14, dt),
+      damp(c.look.y, baseY + 1.45, 8, dt),
+      damp(c.look.z, kp.z + Math.cos(c.heading) * lookAhead + rightZ(c.heading) * inside, 14, dt),
     );
-    c.fov = damp(c.fov, boost ? 80 : 66 + speed * 0.08, 4, dt);
+    // Field of view widens with speed, and kicks out on a boost then settles: the rush of speed.
+    const fovWant = 64 + sp * 7 + (boost ? 9 : 0) + (k.rocket > 0 ? 6 : 0);
+    c.fov = damp(c.fov, fovWant, fovWant > c.fov ? 7 : 2.5, dt);
     c.camera.fov = c.fov;
+    // A spring for dips from landings and hits.
+    if (dt > 0) {
+      c.dipV += (-c.dip * 110 - c.dipV * 13) * dt;
+      c.dip += c.dipV * dt;
+    }
     c.camera.position.copy(c.pos);
+    c.camera.position.y += c.dip * 0.12;
     if (c.shake > 0) {
       c.shake = Math.max(0, c.shake - dt * 1.8);
       const s = c.shake * c.shake * 0.8;
@@ -510,6 +563,26 @@ export class GameView {
       c.camera.position.y += (Math.random() - 0.5) * s;
     }
     c.camera.lookAt(c.look);
+    // Bank gently into turns, by how fast the camera is swinging round.
+    const swing = dt > 0 ? wrapAngle(c.heading - before) / dt : 0;
+    c.roll = damp(c.roll, clamp(swing * 0.03, -0.07, 0.07), 5, dt);
+    c.camera.rotateZ(c.roll);
+    c.blur = damp(c.blur, k.rocket > 0 ? 1 : boost ? 0.6 : clamp((sp - 1) * 2, 0, 0.4), boost ? 8 : 3, dt);
+  }
+
+  /** How far a viewport stays sharp before the depth of field starts. */
+  private focusFor(r: ViewportRect, cam: THREE.PerspectiveCamera) {
+    if (r.kart >= 0) return 70;
+    if (r.kart === -1) return cam.position.distanceTo(this.overviewLook) * 1.25;
+    if (this.cameraMode === 'intro') return 90;
+    const target = this.podiumCenter && this.cameraMode === 'podium' ? this.podiumCenter : this.rigs[this.cinemaKart]?.root.position;
+    // Close on the kart and the room melts away behind it: the miniature look.
+    return target ? cam.position.distanceTo(target) * 1.6 : 60;
+  }
+
+  private speedFor(r: ViewportRect) {
+    if (r.kart < 0) return 0;
+    return this.chases.find((c) => c.kart === r.kart)?.blur ?? 0;
   }
 
   /** One camera over the table that keeps every human in shot. */
@@ -741,6 +814,8 @@ export class GameView {
     this.items?.dispose();
     for (const r of this.rigs) disposeTree(r.root);
     if (this.podiumGroup) disposeTree(this.podiumGroup);
+    this.envTarget?.dispose();
+    this.post.dispose();
     this.renderer.dispose();
   }
 }

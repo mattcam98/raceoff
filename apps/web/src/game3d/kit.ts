@@ -36,7 +36,10 @@ export function disposeTree(root: THREE.Object3D) {
 }
 
 export interface MatOpts {
+  /** Glossiness on the old 0-120 Phong scale: 0 is matte, 120 polished. Turned into roughness. */
   shiny?: number;
+  /** 0 for paint, plastic, food and cloth; 1 for bare metal. */
+  metal?: number;
   emissive?: string;
   emissiveIntensity?: number;
   opacity?: number;
@@ -45,9 +48,12 @@ export interface MatOpts {
   flat?: boolean;
 }
 
-/** A material by colour and finish, made once. Shiny ones are Phong (ceramic, plastic), the rest Lambert. */
+/** Roughness for a glossiness on the 0-120 scale: matte things are rough, ceramic and plastic glossy. */
+export const roughnessFor = (shiny = 0) => (shiny ? Math.max(0.1, 0.85 - 0.6 * Math.sqrt(shiny / 120)) : 0.82);
+
+/** A physically based material by colour and finish, made once. */
 export function mat(color: string, o: MatOpts = {}): THREE.Material {
-  const key = `${color}|${o.shiny ?? 0}|${o.emissive ?? ''}|${o.emissiveIntensity ?? 1}|${o.opacity ?? 1}|${o.map?.uuid ?? ''}|${o.side ?? 0}|${o.flat ? 1 : 0}`;
+  const key = `${color}|${o.shiny ?? 0}|${o.metal ?? 0}|${o.emissive ?? ''}|${o.emissiveIntensity ?? 1}|${o.opacity ?? 1}|${o.map?.uuid ?? ''}|${o.side ?? 0}|${o.flat ? 1 : 0}`;
   let m = mats.get(key);
   if (m) return m;
   const common = {
@@ -60,7 +66,7 @@ export function mat(color: string, o: MatOpts = {}): THREE.Material {
     emissive: new THREE.Color(o.emissive ?? '#000000'),
     emissiveIntensity: o.emissiveIntensity ?? 1,
   };
-  m = o.shiny ? new THREE.MeshPhongMaterial({ ...common, shininess: o.shiny, specular: new THREE.Color('#444444') }) : new THREE.MeshLambertMaterial(common);
+  m = new THREE.MeshStandardMaterial({ ...common, roughness: roughnessFor(o.shiny), metalness: o.metal ?? 0 });
   if (common.transparent) (m as THREE.Material).depthWrite = false;
   mats.set(key, m);
   return shareResource(m);
@@ -177,16 +183,18 @@ export function bake(root: THREE.Object3D, name = 'baked'): THREE.Group {
   const buckets = new Map<string, Bucket>();
   const keep: THREE.Object3D[] = [];
   /** One shared vertex-coloured material per kind of finish, made for this bake only. */
-  const shared = (m: THREE.MeshLambertMaterial | THREE.MeshPhongMaterial): { key: string; make: () => THREE.Material } | null => {
+  const shared = (m: THREE.MeshStandardMaterial): { key: string; make: () => THREE.Material } | null => {
     if (m.map || m.transparent || m.emissiveIntensity * (m.emissive.r + m.emissive.g + m.emissive.b) > 0) return null;
-    const phong = (m as THREE.MeshPhongMaterial).isMeshPhongMaterial;
-    const shininess = phong ? (m as THREE.MeshPhongMaterial).shininess : 0;
-    const key = `vc|${phong ? 'p' : 'l'}|${shininess}|${m.flatShading ? 1 : 0}|${m.side}`;
+    const coat = (m as THREE.MeshPhysicalMaterial).clearcoat ?? 0;
+    const key = `vc|${m.type}|${m.roughness}|${m.metalness}|${coat}|${m.flatShading ? 1 : 0}|${m.side}`;
     return {
       key,
       make: () => {
-        const opts = { vertexColors: true, flatShading: m.flatShading, side: m.side };
-        return phong ? new THREE.MeshPhongMaterial({ ...opts, shininess, specular: (m as THREE.MeshPhongMaterial).specular.clone() }) : new THREE.MeshLambertMaterial(opts);
+        // Same finish, colour carried per vertex instead.
+        const c = m.clone();
+        c.color.set('#ffffff');
+        c.vertexColors = true;
+        return c;
       },
     };
   };
@@ -204,8 +212,8 @@ export function bake(root: THREE.Object3D, name = 'baked'): THREE.Group {
     for (const a of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(a)) g.deleteAttribute(a);
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     if (!g.attributes.normal) g.computeVertexNormals();
-    const mat = m.material as THREE.MeshLambertMaterial;
-    const sh = mat.isMeshLambertMaterial || (mat as unknown as THREE.MeshPhongMaterial).isMeshPhongMaterial ? shared(mat) : null;
+    const mat = m.material as THREE.MeshStandardMaterial;
+    const sh = mat.isMeshStandardMaterial ? shared(mat) : null;
     const key = sh ? sh.key : mat.uuid;
     let b = buckets.get(key);
     if (!b) {

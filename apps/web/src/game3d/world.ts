@@ -163,19 +163,19 @@ interface WallKind {
 function wallKind(style: string): WallKind {
   switch (style) {
     case 'sugar':
-      return { geo: new THREE.BoxGeometry(2.8, 2.8, 2.8).translate(0, 1.4, 0), material: new THREE.MeshPhongMaterial({ shininess: 20 }), spacing: 3, colors: ['#ffffff', '#fbf6ec', '#f2f2f2'], along: true, jitter: 0.25 };
+      return { geo: new THREE.BoxGeometry(2.8, 2.8, 2.8).translate(0, 1.4, 0), material: mat('#ffffff', { shiny: 20 }).clone(), spacing: 3, colors: ['#ffffff', '#fbf6ec', '#f2f2f2'], along: true, jitter: 0.25 };
     case 'pencil':
-      return { geo: new THREE.CylinderGeometry(1, 1, 7.6, 6).rotateX(Math.PI / 2).translate(0, 1, 0), material: new THREE.MeshLambertMaterial({ flatShading: true }), spacing: 7.8, colors: ['#ffcc00', '#ef476f', '#3d9bff', '#06d6a0', '#9b5de5', '#ff8c1a'], along: true, jitter: 0 };
+      return { geo: new THREE.CylinderGeometry(1, 1, 7.6, 6).rotateX(Math.PI / 2).translate(0, 1, 0), material: mat('#ffffff', { flat: true }).clone(), spacing: 7.8, colors: ['#ffcc00', '#ef476f', '#3d9bff', '#06d6a0', '#9b5de5', '#ff8c1a'], along: true, jitter: 0 };
     case 'block':
-      return { geo: new THREE.BoxGeometry(3, 3, 3).translate(0, 1.5, 0), material: new THREE.MeshPhongMaterial({ shininess: 30 }), spacing: 3.1, colors: ['#ef476f', '#ffd166', '#06d6a0', '#118ab2', '#9b5de5'], along: true, jitter: 0 };
+      return { geo: new THREE.BoxGeometry(3, 3, 3).translate(0, 1.5, 0), material: mat('#ffffff', { shiny: 30 }).clone(), spacing: 3.1, colors: ['#ef476f', '#ffd166', '#06d6a0', '#118ab2', '#9b5de5'], along: true, jitter: 0 };
     case 'tire':
-      return { geo: new THREE.TorusGeometry(1.15, 0.6, 8, 16).rotateX(Math.PI / 2).translate(0, 0.6, 0), material: new THREE.MeshPhongMaterial({ shininess: 10 }), spacing: 3.4, colors: ['#26272e', '#1d1e24', '#ffd23f'], along: false, jitter: 0, stack: 2 };
+      return { geo: new THREE.TorusGeometry(1.15, 0.6, 8, 16).rotateX(Math.PI / 2).translate(0, 0.6, 0), material: mat('#ffffff', { shiny: 10 }).clone(), spacing: 3.4, colors: ['#26272e', '#1d1e24', '#ffd23f'], along: false, jitter: 0, stack: 2 };
     case 'soap':
-      return { geo: new THREE.CapsuleGeometry(0.9, 1.6, 4, 8).rotateZ(Math.PI / 2).translate(0, 0.9, 0), material: new THREE.MeshPhongMaterial({ shininess: 60 }), spacing: 3.6, colors: ['#ffb3c6', '#bde0fe', '#caffbf', '#fdffb6', '#ffd6a5'], along: true, jitter: 0.1 };
+      return { geo: new THREE.CapsuleGeometry(0.9, 1.6, 4, 8).rotateZ(Math.PI / 2).translate(0, 0.9, 0), material: mat('#ffffff', { shiny: 60 }).clone(), spacing: 3.6, colors: ['#ffb3c6', '#bde0fe', '#caffbf', '#fdffb6', '#ffd6a5'], along: true, jitter: 0.1 };
     case 'stone':
-      return { geo: new THREE.DodecahedronGeometry(1.6, 0).scale(1, 0.75, 1).translate(0, 1, 0), material: new THREE.MeshLambertMaterial({ flatShading: true }), spacing: 2.6, colors: ['#9a9a9a', '#b0aaa0', '#8a8f96', '#c2b8a8'], along: false, jitter: 0.6 };
+      return { geo: new THREE.DodecahedronGeometry(1.6, 0).scale(1, 0.75, 1).translate(0, 1, 0), material: mat('#ffffff', { flat: true }).clone(), spacing: 2.6, colors: ['#9a9a9a', '#b0aaa0', '#8a8f96', '#c2b8a8'], along: false, jitter: 0.6 };
     default:
-      return { geo: new THREE.BoxGeometry(1, 1.6, 3.2).translate(0, 0.8, 0), material: new THREE.MeshPhongMaterial({ shininess: 30 }), spacing: 3.2, colors: ['#ff4d2e', '#ffffff'], along: true, jitter: 0 };
+      return { geo: new THREE.BoxGeometry(1, 1.6, 3.2).translate(0, 0.8, 0), material: mat('#ffffff', { shiny: 30 }).clone(), spacing: 3.2, colors: ['#ff4d2e', '#ffffff'], along: true, jitter: 0 };
   }
 }
 
@@ -502,7 +502,7 @@ export function buildWorld(track: Track): World {
   const f = track.def.floor;
   // A copy: the theme's material is cached and used elsewhere (a rough road of the same stuff), and the
   // floor's texture repeat must not reach those.
-  const groundMat = (theme.ground() as THREE.MeshLambertMaterial).clone();
+  const groundMat = (theme.ground() as THREE.MeshStandardMaterial).clone();
   if (groundMat.map) {
     groundMat.map = groundMat.map.clone();
     groundMat.map.needsUpdate = true;
