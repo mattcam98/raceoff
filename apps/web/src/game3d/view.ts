@@ -11,6 +11,7 @@ import { Fx } from './fx';
 import { environmentFor } from './env';
 import { disposeTree, mat } from './kit';
 import { ItemsView } from './items3d';
+import { animateKart } from './kartAnim';
 import { buildKart, shieldUniforms, type KartRig } from './kartModel';
 import { Post, type PostView } from './post';
 import { Skids } from './skids';
@@ -435,7 +436,7 @@ export class GameView {
     this.world.update(race.time, dt, race.hazards);
     this.items!.update(race, alpha, dt);
     shieldUniforms.uTime.value = this.time;
-    race.karts.forEach((k, i) => this.updateKart(k, this.rigs[i], alpha));
+    race.karts.forEach((k, i) => this.updateKart(k, this.rigs[i], alpha, dt));
     this.fx.update(dt);
     this.skids.update(dt);
 
@@ -712,26 +713,11 @@ export class GameView {
 
   // ---------------------------------------------------------------- karts
 
-  private updateKart(k: Kart, rig: KartRig, alpha: number) {
+  private updateKart(k: Kart, rig: KartRig, alpha: number, dt: number) {
     const p = this.kartPos(k, alpha);
     const h = k.ph + wrapAngle(k.h - k.ph) * alpha;
-    rig.root.position.copy(p);
-    rig.root.rotation.y = h;
-    rig.tilt.rotation.x = -k.pitch;
-    rig.tilt.rotation.z = -k.roll;
     const sp = clamp(Math.abs(k.speed) / k.params.maxSpeed, 0, 1.3);
-    // Body: drift angle, spins, flips, squash, lean and a little engine shiver.
-    // The drift's swing into the corner eases in and out with the physics, with a lean out of the turn.
-    let yaw = -k.driftYaw;
-    let pitch = 0;
-    if (k.stun === 'spin') yaw += k.spinAngle;
-    if (k.stun === 'tumble') pitch = k.spinAngle * 0.5;
-    rig.body.rotation.set(pitch, yaw, -k.steer * 0.06 * sp + k.driftYaw * 0.14 * sp);
-    if (k.stun === 'squash') rig.body.scale.set(1.35, 0.35, 1.35);
-    else rig.body.scale.set(1, 1, 1);
-    rig.body.position.y = k.speed < 1 && !k.stun ? Math.sin(this.time * 40 + k.index) * 0.025 : 0;
-    for (const w of rig.wheels) w.rotation.x = k.wheel / rig.wheelRadius;
-    for (const f of rig.front) f.rotation.y = -k.steer * 0.45;
+    animateKart(rig, k, p, h, this.time, dt);
 
     // Blinking while untouchable after a hit; hidden while being carried back.
     const blink = k.invuln > 0 && k.star === 0 && Math.floor(this.time * 14) % 2 === 0;
