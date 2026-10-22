@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import type { Track } from '@raceoff/game';
 import { at, box, cyl, group, lathe, mat, slab } from './kit';
 import type { Grade } from './post';
-import { buildRoom, buildSky, type RoomSpec } from './rooms';
+import { buildRoom, buildSky, onWall, type Room, type RoomSpec } from './rooms';
 import { withRelief, type Relief } from './surface';
 import { buildProp } from './props';
 import { tex } from './textures';
@@ -56,18 +56,43 @@ function texMat(t: THREE.Texture, repeat: number, size: number, color = '#ffffff
 
 type RoomLook = Pick<RoomSpec, 'floor' | 'wall' | 'lower' | 'skirting' | 'outside' | 'shafts'> & { half?: number; height?: number };
 
-/** The room for a theme: its sun is the theme's sun, so the window, the light shafts and the shadows agree. */
-function room(theme: Theme, place: { x: number; z: number; floorY: number; aimY: number }, look: RoomLook) {
-  return buildRoom({
+/** Puts a prop against a wall: `put(wall, along, up, kind, variant?, out?, scale?)`. */
+type Put = (wall: number, along: number, up: number, kind: string, v?: string | number, out?: number, scale?: number) => THREE.Object3D;
+
+/**
+ * The room for a theme: its sun is the theme's sun, so the window, the light shafts and the shadows agree.
+ * `dress` furnishes it; walls are 0 (-z), 1 (+x), 2 (+z), 3 (-x), and `win` says which has the window.
+ */
+function room(theme: Theme, place: { x: number; z: number; floorY: number; aimY: number }, look: RoomLook, dress?: (put: Put, win: Room['userData']['window']) => void) {
+  const half = look.half ?? 620;
+  const r = buildRoom({
     ...place,
-    half: look.half ?? 620,
-    height: look.height ?? 900,
+    half,
+    height: look.height ?? 640,
     sun: new THREE.Vector3(theme.sun.x, theme.sun.y, theme.sun.z),
     sunColor: theme.sun.color,
     window: { w: 340, h: 300 },
     ...look,
   });
+  const put: Put = (wall, along, up, kind, v, out = 0, scale = 1) => {
+    const o = onWall({ ...place, half }, wall, along, up, buildProp(kind, v), out);
+    o.scale.setScalar(scale);
+    r.add(o);
+    return o;
+  };
+  if (dress) {
+    const win = r.userData.window;
+    dress(put, win);
+    // Curtains either side of the window, the rod just above it, and a plant on the sill.
+    const c = put(win.wall, win.along, 0, 'curtains', win.w + 20, 4);
+    c.scale.y = (win.y + win.h / 2 + 22) / 266;
+    put(win.wall, win.along - win.w * 0.28, win.y - win.h / 2 - 10, 'herbs', undefined, 12, 1.4);
+  }
+  return r;
 }
+
+/** The wall the window is not on, of a preferred pair. */
+const awayFrom = (win: { wall: number }, wall: number) => (win.wall === wall ? (wall + 2) % 4 : wall);
 
 /** A wall finish with world-scale tiling (a texture repeat every 100 units) and a little relief. */
 function wallMat(t: THREE.Texture, relief = 1.2, roughness = 0.9) {
@@ -78,7 +103,15 @@ function wallMat(t: THREE.Texture, relief = 1.2, roughness = 0.9) {
  * The table or desk the track sits on: its top is the floor, and it stands in a
  * room far below. `drape`, if given, is a tablecloth hanging over the edges.
  */
-function tableRoom(track: Track, theme: Theme, drape: THREE.Material | null, side: THREE.Material, look: RoomLook, extra?: (g: THREE.Group, f: NonNullable<Track['def']['floor']>, floorY: number) => void) {
+function tableRoom(
+  track: Track,
+  theme: Theme,
+  drape: THREE.Material | null,
+  side: THREE.Material,
+  look: RoomLook,
+  dress?: Parameters<typeof room>[3],
+  extra?: (g: THREE.Group, f: NonNullable<Track['def']['floor']>, floorY: number) => void,
+) {
   const f = track.def.floor!;
   const w = f.maxX - f.minX;
   const d = f.maxZ - f.minZ;
@@ -112,7 +145,7 @@ function tableRoom(track: Track, theme: Theme, drape: THREE.Material | null, sid
   const legProfile: [number, number][] = [[3.5, 0], [4.5, 4], [3.2, 12], [4, 40], [5.5, 70], [4, 110], [5, 132], [6, 140], [6, legH]];
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) g.add(at(lathe(legProfile, side, 20), cx + sx * (w / 2 - 14), y - slabT - legH, cz + sz * (d / 2 - 14)));
   const floorY = y - slabT - legH;
-  g.add(room(theme, { x: cx, z: cz, floorY, aimY: y }, look));
+  g.add(room(theme, { x: cx, z: cz, floorY, aimY: y }, look, dress));
   extra?.(g, f, floorY);
   return g;
 }
@@ -156,12 +189,15 @@ export const THEMES: Record<string, Theme> = {
         skirting: '#fbf7ef',
         outside: '#d8ecff',
         shafts: 0.08,
+      }, (put, win) => {
+        // A run of kitchen units and the fridge along the back wall.
+        const back = awayFrom(win, 0);
+        put(back, -380, 0, 'counter', 400);
+        put(back, 20, 0, 'counter', 400);
+        put(back, 330, 0, 'fridge');
       }, (g, f, floorY) => {
         g.add(at(buildProp('chair'), (f.minX + f.maxX) / 2 + 60, floorY, f.maxZ + 70, 0, Math.PI, 0));
         g.add(at(buildProp('chair'), f.minX - 70, floorY, (f.minZ + f.maxZ) / 2, 0, Math.PI / 2, 0));
-        // Kitchen counter along the far wall.
-        g.add(at(box(700, 90, 60, mat('#ffffff', { map: tex.wood('#d9c2a0', '#b49b78', 2) })), 0, floorY, -560));
-        g.add(at(box(700, 6, 64, mat('#e9e4dc', { shiny: 40 })), 0, floorY + 90, -560));
       }),
   },
   desk: {
@@ -187,8 +223,12 @@ export const THEMES: Record<string, Theme> = {
         skirting: '#f4f4f0',
         outside: '#cfe4ff',
         shafts: 0.07,
+      }, (put, win) => {
+        const back = awayFrom(win, 0);
+        for (const a of [-420, -250, -80]) put(back, a, 0, 'bookshelf');
+        put(back, 250, 0, 'shelf');
+        put(awayFrom(win, 3), 0, 260, 'pinboard');
       }, (g, _f, floorY) => {
-        g.add(at(buildProp('shelf'), 300, floorY, -580, 0, 0, 0));
         g.add(at(buildProp('chair'), 0, floorY, 190, 0, 0, 0));
       }),
   },
@@ -218,6 +258,12 @@ export const THEMES: Record<string, Theme> = {
         skirting: '#ffffff',
         outside: '#e6f6ff',
         shafts: 0.07,
+      }, (put, win) => {
+        const back = awayFrom(win, 0);
+        put(back, -150, 0, 'sink');
+        put(back, -150, 220, 'mirror');
+        put(back, 200, 110, 'towelrail');
+        put(awayFrom(win, 1), 100, 110, 'towelrail');
       }),
   },
   sandbox: {
@@ -236,18 +282,34 @@ export const THEMES: Record<string, Theme> = {
     curb: ['#ff7a1a', '#ffffff'],
     wall: 'stone',
     look: lookWith({ tint: '#fffaf0', saturation: 1.15 }, { sun: 1.2 }),
-    backdrop: (_t, th) => {
+    backdrop: (t, th) => {
       const g = new THREE.Group();
       g.add(buildSky(new THREE.Vector3(th.sun.x, th.sun.y, th.sun.z)));
       for (let i = 0; i < 26; i++) {
         const a = (i / 26) * Math.PI * 2;
         g.add(at(buildProp('fence'), Math.cos(a) * 470, 0, Math.sin(a) * 470, 0, -a + Math.PI / 2, 0));
       }
-      for (let i = 0; i < 9; i++) {
-        const a = (i / 9) * Math.PI * 2 + 0.3;
-        g.add(at(buildProp('tree'), Math.cos(a) * 560, 0, Math.sin(a) * 560, 0, a, 0));
+      for (let i = 0; i < 11; i++) {
+        const a = (i / 11) * Math.PI * 2 + 0.3;
+        const tree = at(buildProp('tree'), Math.cos(a) * (600 + (i % 3) * 60), 0, Math.sin(a) * (600 + (i % 3) * 60), 0, a, 0);
+        tree.scale.setScalar(2.2 + (i % 4) * 0.35);
+        g.add(tree);
       }
-      g.add(at(group(box(140, 110, 120, mat('#f2e8d5')), at(box(150, 10, 130, mat('#b5523b')), 0, 110, 0)), -420, 0, -420, 0, 0.6, 0));
+      g.add(at(buildProp('shed'), -560, 0, -520, 0, 0.75, 0));
+      // Flowerbeds and tufts of grass between the track and the fence, the same every time.
+      let seed = 5;
+      const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      const b = t.bounds;
+      const colors = ['#ff5d8f', '#ffd23f', '#b07cff', '#ffffff', '#ff8c42'];
+      for (let i = 0; i < 160; i++) {
+        const a = r() * Math.PI * 2;
+        const d = 300 + r() * 160;
+        const x = Math.cos(a) * d;
+        const z = Math.sin(a) * d;
+        if (x > b.minX - 30 && x < b.maxX + 30 && z > b.minZ - 30 && z < b.maxZ + 30) continue;
+        const flower = i % 4 === 0;
+        g.add(at(buildProp(flower ? 'flowers' : 'grass', flower ? colors[i % colors.length] : undefined), x, 0, z, 0, r() * 6, 0));
+      }
       return g;
     },
   },
@@ -278,10 +340,16 @@ export const THEMES: Record<string, Theme> = {
         skirting: '#ffffff',
         outside: '#dff0ff',
         shafts: 0.08,
+      }, (put, win) => {
+        const back = awayFrom(win, 0);
+        // The bed's head is against the wall: it is 430 long, so its middle stands well out.
+        put(back, 300, 0, 'bed', undefined, 215);
+        put(back, -120, 0, 'toychest', undefined, 50);
+        put(back, -360, 0, 'bookcase');
+        put(back, -240, 200, 'toyshelf');
+        put(awayFrom(win, 3), 0, 0, 'bookcase');
+        put(awayFrom(win, 3), 0, 190, 'toyshelf');
       }));
-      // A bed against the wall and a toy chest.
-      g.add(at(group(box(260, 60, 420, mat('#ffffff', { map: tex.wood('#d6a46b', '#a4733f', 3) })), at(box(250, 30, 400, mat('#7bdff2')), 0, 60, 0), at(box(200, 30, 90, mat('#ffffff')), 0, 90, -150)), 380, 0, -200));
-      g.add(at(group(box(140, 70, 80, mat('#ef476f')), at(box(146, 10, 86, mat('#ffd166')), 0, 70, 0)), -380, 0, -380, 0, 0.4, 0));
       return g;
     },
   },
@@ -307,12 +375,16 @@ export const THEMES: Record<string, Theme> = {
       const g = new THREE.Group();
       const at0 = floorRoom(t);
       // Night outside: the window is dark blue moonlight, and no shafts.
-      g.add(room(th, at0, { floor: null, half: 520, height: 520, wall: wallMat(tex.cinder(), 2.5, 0.85), skirting: '#3b3f4d', outside: '#1d2a55', shafts: 0 }));
-      for (let i = 0; i < 4; i++) g.add(at(buildProp('shelf'), at0.x - 300 + i * 200, 0, at0.z - 470));
-      // A car parked in the corner: two huge tyres and a bumper.
-      g.add(at(group(at(cyl(60, 60, 40, mat('#1b1b20'), 24), 0, 60, 0, 0, 0, Math.PI / 2), at(cyl(60, 60, 40, mat('#1b1b20'), 24), 0, 60, 280, 0, 0, Math.PI / 2), at(box(60, 140, 420, mat('#c1121f', { shiny: 80 })), -40, 60, 140)), at0.x + 420, 0, at0.z + 120));
-      // Strip lights, bright enough to bloom.
-      for (const x of [-200, 0, 200]) g.add(at(box(120, 4, 10, mat('#ffffff', { emissive: '#fffbe6', emissiveIntensity: 4 })), at0.x + x, 300, at0.z));
+      g.add(room(th, at0, { floor: null, half: 520, height: 520, wall: wallMat(tex.cinder(), 2.5, 0.85), skirting: '#3b3f4d', outside: '#1d2a55', shafts: 0 }, (put, win) => {
+        const back = awayFrom(win, 0);
+        for (const a of [-360, -140, 80]) put(back, a, 0, 'metalshelf');
+        put(awayFrom(win, 3), -120, 0, 'workbench');
+        put(awayFrom(win, 3), -120, 200, 'pegboard');
+        // The family car, nosed in to the garage.
+        put(awayFrom(win, 2), 180, 0, 'carfront', '#c1121f');
+      }));
+      // Strip lights hanging from the ceiling.
+      for (const x of [-200, 0, 200]) g.add(at(buildProp('striplight'), at0.x + x, 515, at0.z));
       return g;
     },
   },

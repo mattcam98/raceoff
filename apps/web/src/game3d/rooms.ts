@@ -188,8 +188,29 @@ function windowFrame(w: number, h: number, outside: string) {
   return g;
 }
 
-export function buildRoom(spec: RoomSpec): THREE.Group {
-  const g = new THREE.Group();
+/** A built room, with what dressing it needs: where its walls and window are. */
+export interface Room extends THREE.Group {
+  userData: {
+    /** Which wall (0 -z, 1 +x, 2 +z, 3 -x) has the window, and where along it and how high its centre is. */
+    window: { wall: number; along: number; y: number; w: number; h: number };
+  };
+}
+
+/**
+ * Stand `obj` against wall `wall` (0 -z, 1 +x, 2 +z, 3 -x), `along` it from the middle, `up` from the floor,
+ * facing into the room (props face +z with their back at z = 0). `out` brings it off the wall.
+ */
+export function onWall(spec: Pick<RoomSpec, 'x' | 'z' | 'floorY' | 'half'>, wall: number, along: number, up: number, obj: THREE.Object3D, out = 0) {
+  const ry = [0, -Math.PI / 2, Math.PI, Math.PI / 2][wall];
+  const local = new THREE.Vector3(along, up, out).applyAxisAngle(new THREE.Vector3(0, 1, 0), ry);
+  const base = [[0, -spec.half], [spec.half, 0], [0, spec.half], [-spec.half, 0]][wall];
+  obj.position.set(spec.x + base[0] + local.x, spec.floorY + local.y, spec.z + base[1] + local.z);
+  obj.rotation.y = ry;
+  return obj;
+}
+
+export function buildRoom(spec: RoomSpec): Room {
+  const g = new THREE.Group() as Room;
   const { x: cx, z: cz, floorY, half, height } = spec;
   if (spec.floor) {
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(half * 2.2, half * 2.2).rotateX(-Math.PI / 2), spec.floor);
@@ -218,6 +239,7 @@ export function buildRoom(spec: RoomSpec): THREE.Group {
   // Where the window sits along its wall: each wall's own x runs a different way round the room.
   const along = [hitX - cx, hitZ - cz, -(hitX - cx), -(hitZ - cz)][sunWall];
   const winX = THREE.MathUtils.clamp(along, -half + ww, half - ww);
+  g.userData.window = { wall: sunWall, along: winX, y: winY, w: ww, h: wh };
 
   walls.forEach((w, i) => {
     const wallGroup = new THREE.Group();
