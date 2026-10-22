@@ -30,13 +30,13 @@ Mario Kart's basic skill loop is: drift, keep your speed, take a tighter line, c
 
 **What RaceOff does:**
 - **A drift holds 100% of speed.** Grip turns the sideways slide back into forward speed rather than scrubbing it off.
-- **The drift turn depends on steering.** It is **0.55×** full lock when steering out of the bend, **1.0×** with hands off and **1.4×** when steering into it.
+- **The drift turn depends on steering.** It is **0.2×** full lock when steering fully out of the bend, **0.4×** with hands off and **1.4×** when steering fully into it. Leaning in tightens gently at first (the inner half is a curve, not a straight line), so the light lean that charges sparks at full rate still holds a medium bend. At 100cc top speed the arcs are about 83 m, 42 m and 12 m across; a light lean (0.3) holds about 34 m. "October 2026" below explains why.
 - **Drift turning is mostly shared.** It is built 60% on a common turn rate and 40% on the kart's handling stat, so every kart drifts much alike.
 
 | | Before | Now |
 |---|---|---|
 | Speed held while drifting into a bend | 61% | 100% |
-| Drift turn, as a share of full-lock grip turning (out / hands off / in) | 0.34 / 0.84 / 1.48 at 61–80% speed | 0.55 / 1.0 / 1.4 at full speed |
+| Drift turn, as a share of full lock (out / hands off / in) | 0.34 / 0.84 / 1.48 at 61–80% speed | 0.2 / 0.4 / 1.4 at full speed (0.55 / 1.0 / 1.4 until October 2026) |
 | Time gained by drifting to blue / orange / purple, then letting go | 0.00 / −0.01 / −0.15 s | +0.16 / +0.39 / +0.74 s |
 
 The time gained is measured against driving straight over 5 s, with the steering leaning into the bend.
@@ -49,7 +49,7 @@ The time gained is measured against driving straight over 5 s, with the steering
 
 A light lean and full lock therefore charge at exactly the same rate, so players can widen their line without losing charge (known as the "soft drift"). This matters even more with a thumb on glass or a tilted phone, where holding exact full lock is hard.
 
-RaceOff now uses the same kind of switch. The charge rate per second depends on how far the steering leans into the bend:
+RaceOff now uses the same kind of switch. The charge rate per second depends on how far the steering leans into the bend, then on the kart's handling (×0.88 at handling 1, ×1 at 3, ×1.12 at 5, a little like Mario Kart 8's mini-turbo stat):
 
 | Lean into the bend | Charge rate per second |
 |---|---|
@@ -113,7 +113,7 @@ So nearly all real driving happened in the first third of the thumb's travel. A 
 | + longer thumb travel, 100cc at 92% speed | 3 | 0.29/s | 5 | 1.20/s | 172–173 s |
 
 **What changed:**
-- **Steering softens with speed** (`STEER_FALLOFF`). At top speed, ordinary steering now keeps 62% of its turn (it kept 82%): full lock is 76°/s instead of 101°/s. Drifts still keep 82%, so a drift now turns about 1.3× (hands off) to 1.9× (steering in) as sharp as full-lock grip steering. That matches Mario Kart's 1.6–2.2×. Low-speed manoeuvring is unchanged.
+- **Steering softens with speed** (`STEER_FALLOFF`). At top speed, ordinary steering now keeps 62% of its turn (it kept 82%): full lock is 76°/s instead of 101°/s. Drifts still keep 82%, so a drift steered into the bend turns about 1.9× as sharp as full-lock grip steering, which matches Mario Kart's 1.6–2.2×. (Hands off was 1.3×; since October 2026 it is about 0.5×.) Low-speed manoeuvring is unchanged.
 - **The engine classes are a little slower:** 50cc ×0.76, 100cc ×0.92, 150cc ×1.1 (they were 0.8 / 1 / 1.17).
 - **Longer slide-stick travel:** full lock now takes 22% of the steering side, between 56 and 108 px (it was 20%, 48–96 px), so a tremble is a smaller share of it.
 - **The phone sends sooner.** It sends input the moment the thumb moves, a button changes or the tilt updates, at most one early send per 15 ms. Before, input waited for the next 33 ms tick (about 16 ms on average, up to 33 ms). The 33 ms beat remains as a heartbeat.
@@ -137,7 +137,7 @@ Players watch the TV, not the phone, so feedback through the hands and forgiving
 
 ## Walls, bumps and off-road
 
-- **Speed lost on a wall depends on the angle.** The kart keeps `0.99 − 0.24 × head-on²` of its speed, after bouncing off the wall's face. A graze costs about 1%, a 45° hit about 12%, and a head-on hit stops the kart. MKWii scales its loss from about 35% up to 100% by angle. A scrape no longer ends a drift either.
+- **Speed lost on a wall depends on the angle.** The kart keeps `1 − 0.12 × head-on − 0.13 × head-on²` of its speed, after bouncing off the wall's face, less 0.6% for each step it grinds along it with the steering pushed into it. A 15° graze costs about 4%, a 45° hit about 15%, and a head-on hit stops the kart. MKWii scales its loss from about 35% up to 100% by angle. A scrape no longer ends a drift either. (Until October 2026 it was `0.99 − 0.24 × head-on²`, which took 1% for merely touching.)
 - **Ledges are now walls.** A ledge too tall to drive up used to throw the kart backwards at 35% speed, even on a glancing scrape. It now bounces like any other wall: the face's direction comes from the height field, and the kart slides along it.
 - **Speed and boosting make a kart heavier in bumps.** A kart's weight in a bump is now its mass × (0.6 + 0.4 × its share of top speed), doubled while boosting; Sugar Rush and the rocket are still ×6. MK7 and MK8DX likewise make mass grow with speed and give boosting karts a high "dash mass".
 - **Off-road needed no change.** RaceOff already keeps 48–60% of top speed on rough ground and slows down over about 0.3 s. MKWii keeps 45–67% and also ramps down rather than snapping.
@@ -162,7 +162,7 @@ Players watch the TV, not the phone, so feedback through the hands and forgiving
 **What it does that RaceOff already does:**
 - a fixed 60 Hz simulation that is smoothed between frames when drawn;
 - a drift that keeps its speed;
-- a drift turn rate of about ×0.45 steering out, ×0.75 hands off and ×1.35 steering in (RaceOff: 0.55 / 1.0 / 1.4);
+- a drift turn rate of about ×0.45 steering out, ×0.75 hands off and ×1.35 steering in (RaceOff: 0.2 / 0.4 / 1.4, wider than the plugin's because RaceOff's bends are long and its steering at speed is soft);
 - three spark stages;
 - boosts that refresh rather than add up;
 - a wider field of view while boosting.
@@ -189,6 +189,58 @@ Players watch the TV, not the phone, so feedback through the hands and forgiving
 
   With softer bumps, fewer computer karts get shoved into Bath's water. The falls test now races seeds until it has seen falls, instead of relying on two fixed seeds.
 
+## October 2026: what a phone player actually gets
+
+The numbers above were tuned one mechanic at a time. This pass drove the karts the way people on phones do and looked for whatever felt mushy, sticky or unfair. The scripts are in `.scratch/` (`feel.ts`, `thumb.ts`, `bends.ts`, `races.ts`, `vs.ts`, `combos.ts`).
+
+**How it was measured.**
+- **The habit thumb**, extended (`thumb.ts`). The phone is sampled 30 times a second and the TV acts 0.25 s after the driver sees (0.1 s for a quick one). The thumb trembles, and follows a shortcut's road when it is on one. Styles:
+  - *steady* and *eager*, which never drift;
+  - *sloppy*: a big gain, more tremble, and the thumb slipping off the glass now and then;
+  - three *drifters*: they press DRIFT a little late for bends tighter than 45 m (60 m for one), trim with the thumb, and let go after steering hard out of the drift for 0.3 s.
+
+  Two seeds each, two laps of every track, one kart, items off.
+- **The bends themselves** (`bends.ts`): the share of each lap's racing line in each band of radius.
+- **Eight-computer races** with items (`races.ts`): 18 for each setting, and 48 with the line-up rotated so every kart starts from every grid slot.
+
+**What was wrong, worst first.**
+
+1. **Most bends could not be drifted.** The racing lines are mostly gentle: 15–42% of each lap is 35–75 m across, and only 3–9% is tighter than 25 m. A drift held hands off followed a 17 m arc, and even steering fully out only opened it to 31 m (a light lean in: 15 m). So a drift in an ordinary bend dived into the inside wall whatever the thumb did. The drifting thumbs got a boost from 9–22% of their drifts and hit a wall every few seconds; the quick one turned 72 drifts into 6 boosts. The computers never noticed because they only drift bends tighter than 33 m.
+   - *Change:* the drift's arc is now 0.2× full lock steering out, 0.4× hands off and 1.4× steering in (`DRIFT_TURN`, `driftArc`): about 83 m to 12 m across at 100cc. The arc also follows the thumb twice as fast (`DRIFT_TURN_EASE` 2.6 → 5 a second): a drift you cannot correct in time is a drift into a wall.
+2. **Leaning on a wall was sticky.** Every step touching a wall cost 1% of the speed, however gently. Sixty touches a second is more than the engine makes back, so a kart sliding along a wall with the thumb resting a little toward it sat at 73% of top speed until the player noticed and steered away.
+   - *Change:* the loss now comes only from how hard the kart hits (linear and squared in how square-on), plus a grind of 0.6% a step scaled by how far the steering pushes into the wall. Sliding along with a light lean costs nothing; grinding at full lock still holds the kart at 77%, so riding the wall is no shortcut.
+3. **A DRIFT press could silently do nothing.** A press while the kart was in the air (a crest, a jump, the end of another hop) or below 9 m/s (getting going after a knock) was dropped. Holding the button did nothing until it was let go and pressed again. The drifting thumbs ran into this off the jumps.
+   - *Change:* such a press is kept while the button is held (`driftArmed`): the kart hops on landing, or as soon as it is up to speed. Letting go first cancels it. A drift that a hard knock ends is not restarted.
+4. **The computers drove into rollers.** Garage's paint cans and Sandbox's football hit 3–4 computers a lap: 7.7 hazard hits a race at normal and 8.5 at hard; 28.7 on Garage, 5.7 of them a second hit within 3 s. The computers only timed stompers. For anything else they steered a little, often into the path.
+   - *Change:* a computer checks whether holding its speed, or flooring it, meets a moving hazard within the next 0.9 s. It floors it if that gets through first, holds its speed if that does, and otherwise stops short and waits, never creeping into the path. After 2 s of waiting it commits, so a roller that sweeps right up to where it stopped cannot hold it for ever. (Looking 1.2 s ahead with a wider margin stopped them too often: waiting cost more than the hits had. Swerving into the roller's open lane was tried too, and hit more.)
+5. **Top speed decided everything.** Each speed point was 1.5 m/s, 5% of top speed; handling, acceleration and weight together were worth about 1% in a time trial. Zip in the Racer won 30 of 48 rotated races (average place 1.7) and Mochi in the Buggy averaged 6.5. The steady thumb lapped 13% slower in the Mochi.
+   - *Change:* a speed point is now 0.6 m/s (the middle kart is unchanged), and handling scales how fast sparks charge. The steady thumb's spread across the eight line-up karts is now 3.9%, and rotated races average from 2.9 (Zip) to 5.9 (Mochi). Speed is still the strongest stat, as in Mario Kart, but no longer the only one.
+
+**Before and after.**
+
+| | Before | After |
+|---|---|---|
+| Drift arc at 100cc top speed: out / hands off / light lean / in | 31 / 17 / 15 / 12 m | 83 / 42 / 34 / 12 m |
+| Quick drifting thumb, six tracks: total, walls, boosts from drifts | 397 s, 70, 6 of 72 | 378 s, 40, 22 of 62 |
+| Drifting thumb: total, walls, falls | 486 s, 88, 10 | 430 s, 76, 3.5 |
+| Sloppy thumb: walls, seconds scraping | 109, 14.0 | 100, 9.7 |
+| Sliding along a wall for 3 s, steering 0.1 / 0.3 / 1 into it: speed kept | 73 / 73 / 71% | 100 / 100 / 77% |
+| Time lost to a 15° / 45° / 90° wall hit | 0.16 / 0.47 / 2.4 s | 0.01 / 0.24 / 2.4 s |
+| DRIFT pressed in the air, or at 7 m/s, and held | never drifts | hops on landing, or at 9 m/s |
+| Hazard hits a race, eight computers, normal / hard 150cc | 7.7 / 8.5 | 1.2 / 1.9 |
+| Walls a race, eight computers, normal / hard 150cc | 15.3 / 23.3 | 5.2 / 9.8 |
+| Time-trial spread across the line-up (steady thumb) | 12.8% | 3.9% |
+
+The steady thumb, which never drifts, laps about 2% slower than before because its Volt in the Racer (speed 4) lost a little top speed. The drifting thumbs are still slower than the steady one: they are crude drivers that drift every bend over 45 m. The computers, which plan their drifts, gain from them. Winners of eight-computer races are within 1–3 s of before; on Sandbox and Garage about 3 s slower, the time spent letting the roller pass. Against seven computers the steady thumb's average place is unchanged at normal (2.3) and a little better at hard (5.1 → 4.6).
+
+**Looked at and left alone.**
+- **Steering response.** With 65 ms of phone delay and 30 samples a second, the nose has turned 2° 0.12–0.25 s after the thumb moves, and the turn rate reaches 90% within 0.1 s of the TV seeing the change. Nothing to gain.
+- **Acceleration.** 90% of top speed in 1.3 s from a standstill (1.05–1.7 s across the karts). Brisk and forgiving.
+- **Spin-outs.** A ball costs 1.4 s, a blast 1.7 s and a squash 1.2 s, and 1.2 s of protection follows. A second hit within 3 s on the same kart happens 0.2–0.4 times a race, mostly blasts, which ignore protection on purpose.
+- **Off-road.** A second on the grass costs 0.6 s.
+- **Items.** Balls hit about 40% of the time, the Seeker about 70%, oil 90% (someone eventually drives through it). The leader draws ball, oil and shield; the back draws the big items. Nothing stood out.
+- **Rubber-banding.** Against a steady thumb, computers ahead average 0.91 of top speed and those behind 0.97 (normal). The band fades with the gap, so a kart you catch is no longer held back.
+
 ## Checks
 
 - **`race.test.ts`** covers:
@@ -196,6 +248,8 @@ Players watch the TV, not the phone, so feedback through the hands and forgiving
   - automatic drift and its orange cap, and that there is no automatic drift without the assist;
   - smart steering keeping karts on the road;
   - the slipstream boost and the graded rocket start;
-  - wall grazes vs square hits, and item rank by gap;
+  - wall grazes vs square hits, sliding along a wall without sticking, and item rank by gap;
+  - the drift's arcs covering the tracks' bends, and a DRIFT press kept through the air and up to speed;
+  - computers waiting for a roller instead of driving into it, and top speed not deciding everything;
   - full eight-computer races on every track.
 - **Old vs new code** (`.scratch/compare.ts`): eight-computer races on the same seeds give winning times within about 3 s and similar spreads. Wall hits stay within seed-to-seed noise once the slipstream was tightened; an early, looser version boosted computer karts into corners.

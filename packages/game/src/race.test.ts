@@ -1,7 +1,8 @@
 import { BODIES, CHARACTERS, TRACKS } from '@raceoff/shared';
 import { describe, expect, it } from 'vitest';
 import { drawItem, GIANT_BLAST_RADIUS, GIANT_PROTECT, itemRank } from './items';
-import { collideStatic, DRIFT_LEVELS, Kart, KART_RADIUS, NO_INPUT, STEP, stepKart, type KartInput } from './kart';
+import { hazardAt } from './hazards';
+import { collideStatic, DRIFT_LEVELS, Kart, KART_RADIUS, kartParams, NO_INPUT, STEP, stepKart, type KartInput } from './kart';
 import { rightX, rightZ, rng, wrapAngle } from './math';
 import { Race, type RacerSpec } from './race';
 import { colliderDistance, type Collider } from './track/build';
@@ -245,7 +246,9 @@ describe('drifting', () => {
     }
     // Degrees a second the direction of travel turns, once the drift has settled.
     const turned = Math.abs(((Math.atan2(k.vx, k.vz) - travel0 + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
-    return { top, low, held: k.planarSpeed, rate: (turned * 180) / Math.PI, dir: k.driftDir, yaw: k.driftYaw };
+    // The arc's radius in metres: the size of bend this drift follows.
+    const radius = k.planarSpeed / (turned / (60 * STEP));
+    return { top, low, held: k.planarSpeed, rate: (turned * 180) / Math.PI, radius, dir: k.driftDir, yaw: k.driftYaw };
   }
 
   it('keeps its speed: a drift is not a brake', () => {
@@ -260,16 +263,20 @@ describe('drifting', () => {
   it('turns progressively: steering out widens the arc, into it tightens it well past full lock', () => {
     const out = drift(-1);
     const hands = drift(0);
+    const light = drift(0.3);
     const into = drift(1);
     expect(out.rate).toBeLessThan(hands.rate);
-    expect(hands.rate).toBeLessThan(into.rate);
-    // Full lock at this speed turns about 95 degrees a second. Hands off a drift turns about as hard; into it,
-    // a good deal harder, which is what a drift is for; out of it, it opens up.
-    expect(hands.rate).toBeGreaterThan(80);
-    expect(into.rate).toBeGreaterThan(115);
-    expect(into.rate).toBeLessThan(160);
-    expect(out.rate).toBeGreaterThan(30);
-    expect(out.rate).toBeLessThan(70);
+    expect(hands.rate).toBeLessThan(light.rate);
+    expect(light.rate).toBeLessThan(into.rate);
+    // The arcs cover the bends the tracks have, most of them 35 to 120 m across: steering out follows a long
+    // sweeper, hands off or a light lean (which charges at full rate) a medium bend, and steering in a hairpin,
+    // far tighter than full lock (about 24 m at this speed). With hands off at full lock, as it used to be,
+    // most bends could not be drifted without diving into the inside wall.
+    expect(out.radius).toBeGreaterThan(70);
+    expect(hands.radius).toBeGreaterThan(35);
+    expect(hands.radius).toBeLessThan(55);
+    expect(light.radius).toBeGreaterThan(30);
+    expect(into.radius).toBeLessThan(16);
     // The body swings into the corner, more when tightening.
     expect(into.yaw).toBeGreaterThan(hands.yaw);
     expect(hands.yaw).toBeGreaterThan(0.1);
@@ -316,9 +323,70 @@ describe('drifting', () => {
     expect(k.planarSpeed).toBeGreaterThan(before * 1.1);
   });
 
+  it('keeps a DRIFT press made in the air or below drifting speed, and hops as soon as it can', () => {
+    // Pressed while airborne off a crest: it hops on landing, and the steering picks the side as usual.
+    const k = drive(1, () => ({ ...NO_INPUT, gas: true }));
+    k.grounded = false;
+    k.y = 1.2;
+    k.vy = 0;
+    let drifted = false;
+    for (let i = 0; i < 60; i++) {
+      k.input = { ...NO_INPUT, gas: true, drift: true, steer: 0.6 };
+      stepKart(k, flat, STEP, events, null);
+      drifted ||= k.driftDir === 1;
+    }
+    expect(drifted).toBe(true);
+    // Pressed while still slow after a knock, and held: it hops once the kart is up to speed.
+    const slow = new Kart(0, 'p', CHARACTERS[0].id, BODIES[0].id, false, 1);
+    slow.place3(0, 0, 0, 0);
+    slow.vz = 6;
+    for (let i = 0; i < 60; i++) ((slow.input = { ...NO_INPUT, gas: true, drift: true, steer: 0.7 }), stepKart(slow, flat, STEP, events, null));
+    expect(slow.driftDir).toBe(1);
+    // Let go before it could hop: nothing happens later.
+    const tap = new Kart(0, 'p', CHARACTERS[0].id, BODIES[0].id, false, 1);
+    tap.place3(0, 0, 0, 0);
+    tap.vz = 6;
+    for (let i = 0; i < 60; i++) ((tap.input = { ...NO_INPUT, gas: true, drift: i < 3, steer: 0.7 }), stepKart(tap, flat, STEP, events, null));
+    expect(tap.driftDir).toBe(0);
+    expect(tap.hopping).toBe(false);
+  });
+
   it('never drifts on its own without the assist', () => {
     const k = drive(120, () => ({ ...NO_INPUT, gas: true, steer: 1 }));
     expect(k.driftDir).toBe(0);
+  });
+});
+
+describe('computers', () => {
+  it('wait for a roller crossing the road, or beat it, rather than driving into it', () => {
+    let hits = 0;
+    for (const seed of [1, 2, 3, 4]) {
+      const track = getTrack('breakfast');
+      const race = new Race({ track, racers: cpus(1), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed });
+      // A ball rolling from wall to wall across the start straight, every 3 s.
+      const a = track.pointAt(70, -1.1);
+      const b = track.pointAt(70, 1.1);
+      const def = { kind: 'roller' as const, r: 3.5, phase: seed * 0.7, motion: { type: 'pingpong' as const, ax: a.x, az: a.z, bx: b.x, bz: b.z, period: 3 } };
+      race.hazards.push(hazardAt(def, 0));
+      while (race.time < 8) {
+        race.step([]);
+        hits += race.events.filter((e) => e.t === 'hit' && e.how === 'hazard').length;
+        race.events.length = 0;
+      }
+      expect(race.karts[0].s, `seed ${seed} got past`).toBeGreaterThan(90);
+    }
+    expect(hits).toBe(0);
+  });
+});
+
+describe('kart stats', () => {
+  it('do not let top speed decide everything: a nimble kart charges its sparks quicker', () => {
+    const fast = kartParams('zip', 'racer', 1);
+    const nimble = kartParams('mochi', 'buggy', 1);
+    // Speed 5 against speed 2: 15% faster before, which no handling or acceleration could make up; a time trial
+    // came out 13% apart. Now about 6% faster, and the nimble kart's quicker sparks claw some of it back.
+    expect(fast.maxSpeed / nimble.maxSpeed).toBeLessThan(1.07);
+    expect(nimble.charge).toBeGreaterThan(fast.charge * 1.1);
   });
 });
 
@@ -468,6 +536,31 @@ describe('walls', () => {
     expect(hit(0.15)).toBeGreaterThan(0.93);
     expect(hit(Math.PI / 4)).toBeGreaterThan(0.6);
     expect(hit(Math.PI / 2)).toBeLessThan(0.4);
+  });
+
+  /** Speed share left after driving along a wall on the right for 3 s with the steering leaning `lean` into it. */
+  function slide(lean: number) {
+    const track = wallTrack({ t: 'seg', ax: 3, az: -1000, bx: 3, bz: 1000, r: 0 });
+    const k = new Kart(0, 'p', CHARACTERS[0].id, BODIES[0].id, false, 1);
+    k.place3(0, 0, -500, 0);
+    for (let i = 0; i < 300; i++) ((k.input = { ...NO_INPUT, gas: true }), stepKart(k, track, STEP, events, null));
+    const top = k.planarSpeed;
+    let low = top;
+    for (let i = 0; i < 180; i++) {
+      k.input = { ...NO_INPUT, gas: true, steer: -lean };
+      stepKart(k, track, STEP, events, null);
+      if (i > 60) low = Math.min(low, k.planarSpeed);
+    }
+    return low / top;
+  }
+
+  it('slides along a wall it leans on instead of sticking to it; grinding at full lock still costs', () => {
+    // A light lean is a thumb resting a little off centre beside a wall: it used to hold the kart at 73% speed.
+    expect(slide(0.1)).toBeGreaterThan(0.97);
+    expect(slide(0.3)).toBeGreaterThan(0.95);
+    // Pushing hard into it grinds: about a fifth of the speed, so riding the wall is no shortcut.
+    expect(slide(1)).toBeLessThan(0.85);
+    expect(slide(1)).toBeGreaterThan(0.6);
   });
 });
 
