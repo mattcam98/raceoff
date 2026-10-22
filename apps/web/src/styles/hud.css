@@ -1,0 +1,752 @@
+/*
+ * The in-race HUD (tv/hud.ts). Built to be read from the sofa: big italic
+ * numerals with a thick ink outline, dark glass behind small text, player
+ * colours on everything that is yours. Each panel's font size is its
+ * viewport's scale (--s), so the same em sizes fit one, two or four players.
+ * Only transforms and opacity move.
+ */
+
+.hud {
+  --hud-ink: #0b0e26;
+  --hud-glass: rgb(12 15 42 / 0.74);
+  position: absolute;
+  inset: 0;
+  font-family: var(--font-display);
+  color: #fff;
+  pointer-events: none;
+}
+
+/*
+ * Chunky outlined numerals: the stroke is painted under the fill, so letters keep their weight. It is set on
+ * the element that has the big font size, as an em stroke is fixed in pixels where it is declared.
+ */
+.hud-lap__num > *,
+.hud-place b,
+.hud-place sup,
+.hud-banner__text,
+.hud-count__n {
+  font-style: italic;
+  font-weight: 900;
+  -webkit-text-stroke: 0.14em var(--hud-ink);
+  paint-order: stroke fill;
+  line-height: 0.9;
+}
+
+.hud-panel {
+  --s: 1;
+  position: absolute;
+  overflow: hidden;
+  font-size: calc(var(--s) * 1em);
+}
+/* Split screen: a dark seam and a thin frame in the player's colour, so you always know which view is yours. */
+.hud-panel:not([data-pos='full']):not(.is-corner) {
+  box-shadow:
+    inset 0 0 0 0.25em var(--hud-ink),
+    inset 0 0 0 0.5em color-mix(in srgb, var(--pc) 80%, transparent);
+}
+
+/* ---- top left: item and lap */
+.hud-tl {
+  position: absolute;
+  top: 1.1em;
+  left: 1.1em;
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+}
+.hud-item {
+  --ring: #fff;
+  position: relative;
+  width: 5.8em;
+  height: 5.8em;
+  flex: none;
+}
+.hud-item__slot {
+  position: absolute;
+  inset: 0;
+  border-radius: 30%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 28%, rgb(84 92 170 / 0.92), rgb(16 19 52 / 0.94) 72%);
+  box-shadow: 0 0.32em 0 var(--hud-ink), 0 0.6em 1.4em rgb(0 0 0 / 0.35);
+}
+/* The frame and a gloss sit above the icon, so the reel slides under them. */
+.hud-item__slot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.2), transparent 42%);
+  box-shadow:
+    inset 0 0 0 0.32em var(--ring),
+    inset 0 0 0 0.5em var(--hud-ink);
+  transition: box-shadow 160ms;
+}
+.hud-item__icon {
+  width: 70%;
+  height: 70%;
+  display: none;
+  filter: drop-shadow(0 0.14em 0 rgb(0 0 0 / 0.35));
+}
+.hud-item__icon svg,
+.hud-feed__icon svg,
+.hud-banner__icon svg,
+.hud-closing__icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.hud-item__reel {
+  position: absolute;
+  inset: 15%;
+  overflow: hidden;
+  display: none;
+  -webkit-mask-image: linear-gradient(transparent, #000 28%, #000 72%, transparent);
+  mask-image: linear-gradient(transparent, #000 28%, #000 72%, transparent);
+}
+.hud-item[data-state='full'] .hud-item__icon {
+  display: block;
+}
+.hud-item[data-state='rolling'] {
+  --ring: var(--sun);
+}
+.hud-item[data-state='rolling'] .hud-item__reel {
+  display: block;
+}
+.hud-item[data-state='rolling'] .hud-item__slot {
+  box-shadow: 0 0.32em 0 var(--hud-ink), 0 0 1.4em rgb(255 201 60 / 0.7);
+}
+.hud-item[data-state='empty'] {
+  --ring: rgb(255 255 255 / 0.55);
+}
+.hud-item__count {
+  position: absolute;
+  right: -0.45em;
+  bottom: -0.45em;
+  font-size: 1.35em;
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  padding: 0.12em 0.4em 0.16em 0.3em;
+  border-radius: 999px;
+  background: var(--sun);
+  color: var(--hud-ink);
+  box-shadow: 0 0.14em 0 var(--hud-ink), inset 0 0 0 0.1em var(--hud-ink);
+}
+.hud-item__count:empty {
+  display: none;
+}
+
+.hud-lap {
+  display: grid;
+  justify-items: start;
+  gap: 0.15em;
+  transform-origin: 20% 60%;
+  filter: drop-shadow(0 0.16em 0 rgb(11 14 38 / 0.85));
+}
+.hud-lap__label {
+  font-size: 0.95em;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.16em;
+  padding: 0.08em 0.5em 0.1em;
+  border-radius: 0.3em;
+  background: var(--hud-ink);
+}
+.hud-lap__num b {
+  font-size: 4.2em;
+}
+.hud-lap__num small {
+  font-size: 2em;
+  color: #dcd8ff;
+}
+.hud-lap[data-state='final'] .hud-lap__label {
+  background: var(--race);
+  animation: nudge 0.9s ease-in-out infinite;
+}
+.hud-lap[data-state='final'] .hud-lap__num b {
+  color: #ff7a5c;
+}
+.hud-lap[data-state='done'] .hud-lap__label {
+  background: var(--sun);
+  color: var(--hud-ink);
+  font-size: 1.3em;
+}
+
+/* ---- top right: race time and lap splits */
+.hud-tr {
+  position: absolute;
+  top: 1.1em;
+  right: 1.1em;
+  display: grid;
+  justify-items: end;
+  gap: 0.45em;
+}
+.hud-time,
+.hud-split {
+  font-family: var(--font-body);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  border-radius: 0.45em;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 0.14em 0 rgb(0 0 0 / 0.4);
+}
+.hud-time {
+  font-size: 1.55em;
+  padding: 0.28em 0.55em 0.3em;
+  background: var(--hud-glass);
+  letter-spacing: 0.02em;
+}
+.hud-split {
+  font-size: 1.2em;
+  padding: 0.3em 0.55em;
+  background: var(--sky-deep);
+  transition: opacity 260ms, transform 260ms var(--ease-out);
+}
+.hud-split small {
+  font-family: var(--font-display);
+  font-size: 0.72em;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  margin-right: 0.55em;
+  opacity: 0.85;
+}
+.hud-split[data-state='best'] {
+  background: var(--sun);
+  color: #2a1c00;
+}
+.hud-split[data-state='hidden'] {
+  opacity: 0;
+  transform: translateY(-0.5em);
+}
+
+/* ---- bottom right: the place, huge */
+.hud-place {
+  position: absolute;
+  right: 0.35em;
+  bottom: 0.15em;
+  color: #fff;
+  font-style: italic;
+  line-height: 0.9;
+  filter: drop-shadow(0 0.1em 0 var(--hud-ink)) drop-shadow(0 0.25em 0.5em rgb(0 0 0 / 0.3));
+}
+.hud-place__in {
+  display: inline-block;
+  transform-origin: 65% 75%;
+}
+.hud-place b {
+  font-size: 8.4em;
+  letter-spacing: -0.03em;
+  -webkit-text-stroke-width: 0.11em;
+}
+.hud-place sup {
+  font-size: 3.1em;
+  -webkit-text-stroke-width: 0.16em;
+  vertical-align: top;
+  position: relative;
+  top: 0.3em;
+  margin-left: 0.02em;
+}
+.hud-place[data-state='p1'] {
+  color: #ffd23f;
+}
+.hud-place[data-state='p2'] {
+  color: #e8eefa;
+}
+.hud-place[data-state='p3'] {
+  color: #ff9f5a;
+}
+.hud-place[data-state='pn'] {
+  color: #c9c5ff;
+}
+
+/* Keep the corners nearest the minimap clear: it sits where the viewports meet. */
+.hud-panel[data-pos='left'] .hud-place,
+.hud-panel[data-pos='tl'] .hud-place,
+.hud-panel[data-pos='bl'] .hud-place {
+  right: auto;
+  left: 0.6em;
+}
+.hud-panel[data-pos='bl'] .hud-tr {
+  top: auto;
+  bottom: 1.1em;
+}
+.hud-panel[data-pos='br'] .hud-tl {
+  left: auto;
+  right: 1.1em;
+  flex-direction: row-reverse;
+}
+.hud-panel[data-pos='br'] .hud-lap {
+  justify-items: end;
+}
+.hud-panel[data-pos='br'] .hud-tr {
+  top: auto;
+  right: auto;
+  bottom: 1.1em;
+  left: 1.1em;
+  justify-items: start;
+}
+
+/* ---- whose view: a tag at the top, only when the screen is shared out */
+.hud-name {
+  position: absolute;
+  left: 50%;
+  top: 1em;
+  transform: translateX(-50%);
+  font-weight: 800;
+  font-size: 1.1em;
+  white-space: nowrap;
+  padding: 0.15em 0.7em 0.15em 0.2em;
+  border-radius: 999px;
+  background: var(--hud-glass);
+}
+.hud-name span {
+  display: inline-block;
+  background: var(--pc);
+  border-radius: 999px;
+  padding: 0.05em 0.5em;
+  margin-right: 0.45em;
+  font-weight: 900;
+}
+.hud-panel[data-pos='full'] .hud-name {
+  display: none;
+}
+
+/* ---- banners */
+.hud-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 27%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.4em;
+  text-align: center;
+  white-space: nowrap;
+  filter: drop-shadow(0 0.25em 0.6em rgb(0 0 0 / 0.35));
+}
+.hud-banner[data-state='hidden'] {
+  display: none;
+}
+.hud-banner__icon {
+  display: none;
+  width: 2.6em;
+  height: 2.6em;
+}
+.hud-banner__text {
+  font-size: 3.2em;
+}
+.hud-banner__text:empty {
+  display: none;
+}
+.hud-banner[data-state='good'] .hud-banner__text {
+  color: #ffd23f;
+  font-size: 3em;
+  display: inline-block;
+  transform: rotate(-3deg);
+}
+.hud-banner[data-state='warn'] .hud-banner__text,
+.hud-banner[data-state='wrong'] .hud-banner__text {
+  /* A hazard sign: yellow plate, black-and-yellow striped edge. */
+  font-size: 2.3em;
+  color: var(--hud-ink);
+  -webkit-text-stroke: 0;
+  padding: 0.18em 0.6em 0.22em;
+  border: 0.16em solid transparent;
+  border-radius: 0.28em;
+  background:
+    linear-gradient(var(--sun), var(--sun)) padding-box,
+    repeating-linear-gradient(-45deg, var(--hud-ink) 0 0.3em, var(--sun) 0.3em 0.6em) border-box;
+  box-shadow: 0 0.14em 0 var(--hud-ink);
+}
+.hud-banner[data-state='wrong'] {
+  top: 34%;
+  color: var(--sun);
+  animation: nudge 0.6s ease-in-out infinite;
+}
+.hud-banner[data-state='wrong'] .hud-banner__icon {
+  display: block;
+  padding: 0.35em;
+  border-radius: 50%;
+  background: var(--race);
+  color: #fff;
+  box-shadow: 0 0 0 0.18em var(--hud-ink), 0 0.25em 0 var(--hud-ink);
+}
+/* FINAL LAP: a red ribbon right across the view, chequered top and bottom. */
+.hud-banner[data-state='final'] {
+  left: -6%;
+  right: -6%;
+  padding: 0.75em 0;
+  background: linear-gradient(180deg, #ff6a3d, var(--race) 55%, var(--race-deep));
+  box-shadow: 0 0.3em 0 rgb(11 14 38 / 0.6);
+}
+.hud-banner[data-state='final']::before,
+.hud-banner[data-state='final']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0.5em;
+  background: repeating-conic-gradient(#fff 0 25%, #1b1740 0 50%) 0 0 / 1em 1em;
+}
+.hud-banner[data-state='final']::before {
+  top: 0;
+}
+.hud-banner[data-state='final']::after {
+  bottom: 0;
+}
+.hud-banner[data-state='final'] .hud-banner__text {
+  font-size: 3.8em;
+  letter-spacing: 0.02em;
+}
+.hud-banner[data-state='finish'] {
+  top: 36%;
+}
+.hud-banner[data-state='finish'] .hud-banner__text {
+  font-size: 7em;
+  color: #ffd23f;
+}
+
+/* ---- drift charge: three pips under the kart */
+.hud-drift {
+  position: absolute;
+  left: 50%;
+  bottom: 1.3em;
+  display: flex;
+  gap: 0.35em;
+  transform: translateX(-50%);
+  transition: opacity 150ms;
+  --dc: #5ec8ff;
+}
+.hud-drift i {
+  width: 2.4em;
+  height: 0.6em;
+  border-radius: 0.2em;
+  transform: skewX(-20deg);
+  background: rgb(11 14 38 / 0.55);
+  box-shadow: inset 0 0 0 0.1em rgb(255 255 255 / 0.35);
+}
+.hud-drift[data-state='off'] {
+  opacity: 0;
+}
+.hud-drift[data-state='l2'] {
+  --dc: #ffa630;
+}
+.hud-drift[data-state='l3'] {
+  --dc: #c77dff;
+}
+.hud-drift[data-state='l1'] i:nth-child(-n + 1),
+.hud-drift[data-state='l2'] i:nth-child(-n + 2),
+.hud-drift[data-state='l3'] i {
+  background: var(--dc);
+  box-shadow: 0 0 0.9em var(--dc), inset 0 0 0 0.1em rgb(255 255 255 / 0.6);
+}
+
+/* ---- the overview: one compact card per player in the corners */
+.hud-panel.is-corner {
+  --s: 0.82;
+  overflow: visible;
+  width: 19em;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: 'item name place' 'item lap place' 'item time place';
+  align-items: center;
+  column-gap: 0.75em;
+  row-gap: 0.2em;
+  padding: 0.7em 0.6em 0.7em 0.8em;
+  border-radius: 1.1em;
+  background: var(--hud-glass);
+  box-shadow: inset 0 0 0 0.22em var(--pc), 0 0.5em 1.4em rgb(0 0 0 / 0.4);
+}
+.hud-panel.is-corner[data-corner='0'] {
+  left: 1em;
+  top: 1em;
+}
+.hud-panel.is-corner[data-corner='1'] {
+  right: 1em;
+  top: 1em;
+}
+.hud-panel.is-corner[data-corner='2'] {
+  left: 1em;
+  bottom: 1em;
+}
+.hud-panel.is-corner[data-corner='3'] {
+  right: 1em;
+  bottom: 1em;
+}
+.is-corner .hud-tl,
+.is-corner .hud-tr {
+  display: contents;
+}
+.is-corner .hud-item {
+  grid-area: item;
+  width: 4.4em;
+  height: 4.4em;
+}
+.is-corner .hud-lap {
+  grid-area: lap;
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.is-corner .hud-lap__num b {
+  font-size: 2em;
+}
+.is-corner .hud-lap__num small {
+  font-size: 1.2em;
+}
+.is-corner .hud-time {
+  grid-area: time;
+  justify-self: start;
+  font-size: 1em;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-dim);
+}
+.is-corner .hud-split,
+.is-corner .hud-drift {
+  display: none;
+}
+.is-corner .hud-name {
+  grid-area: name;
+  position: static;
+  transform: none;
+  justify-self: start;
+  background: none;
+  padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.is-corner .hud-place {
+  grid-area: place;
+  position: static;
+  align-self: end;
+}
+.is-corner .hud-place b {
+  font-size: 4.6em;
+}
+.is-corner .hud-place sup {
+  font-size: 1.8em;
+}
+/* Banners hang off the card, toward the middle of the screen. */
+.is-corner .hud-banner {
+  top: calc(100% + 0.6em);
+  font-size: 0.6em;
+}
+.is-corner[data-corner='2'] .hud-banner,
+.is-corner[data-corner='3'] .hud-banner {
+  top: auto;
+  bottom: calc(100% + 0.6em);
+}
+.is-corner .hud-banner[data-state='final'] {
+  left: 0;
+  right: 0;
+  border-radius: 0.6em;
+  overflow: hidden;
+}
+.is-corner .hud-banner[data-state='finish'] .hud-banner__text {
+  font-size: 4.5em;
+}
+
+/* ---- the countdown, slammed onto the middle of the screen */
+.hud-count {
+  --cc: var(--race);
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: 0;
+  height: 0;
+  z-index: 3;
+}
+.hud-count[data-state='hidden'] {
+  display: none;
+}
+.hud-count::before {
+  content: '';
+  position: absolute;
+  left: -11em;
+  top: -11em;
+  width: 22em;
+  height: 22em;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--cc) 55%, transparent) 0, transparent 62%);
+}
+.hud-count__n {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-52%, -50%);
+  font-size: 14em;
+  -webkit-text-stroke-width: 0.1em;
+  color: var(--cc);
+  white-space: nowrap;
+  filter: drop-shadow(0 0.06em 0 var(--hud-ink));
+}
+.hud-count[data-state='n2'] {
+  --cc: #ffa630;
+}
+.hud-count[data-state='n1'] {
+  --cc: #ffd23f;
+}
+.hud-count[data-state='go'] {
+  --cc: var(--mint);
+}
+.hud-count[data-state='go'] .hud-count__n {
+  font-size: 17em;
+}
+
+/* ---- minimap */
+.hud-map {
+  position: absolute;
+  filter: drop-shadow(0 0.4em 0.8em rgb(0 0 0 / 0.5));
+}
+
+/* ---- running order down the left */
+.hud-tower {
+  --row: 2em;
+  position: absolute;
+  left: 0.9em;
+  top: 50%;
+  width: 11.5em;
+  height: calc(var(--row) * 8);
+  transform: translateY(-50%);
+  font-family: var(--font-body);
+}
+.hud-tower[data-hidden='1'] {
+  display: none;
+}
+.hud-tower[data-layout='split'] {
+  font-size: 0.9em;
+}
+.hud-tick {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: var(--row);
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0 0.6em 0 0.15em;
+  font-weight: 700;
+  font-size: 0.95em;
+  transition: transform 420ms var(--ease-out);
+}
+.hud-tick::before {
+  content: '';
+  position: absolute;
+  inset: 0.14em 0;
+  z-index: -1;
+  border-radius: 0.55em;
+  background: rgb(12 15 42 / 0.62);
+}
+.hud-tick__pos {
+  width: 1.7em;
+  text-align: center;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 900;
+}
+.hud-tick__face {
+  width: 1.55em;
+  height: 1.55em;
+  flex: none;
+}
+.hud-tick__face svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.hud-tick__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+.hud-tick[data-state~='human']::before {
+  background: color-mix(in srgb, var(--pc) 78%, #0b0e26);
+  box-shadow: inset 0 0 0 0.12em color-mix(in srgb, var(--pc) 60%, #fff);
+}
+.hud-tick[data-state~='human'] .hud-tick__name {
+  color: #fff;
+  font-weight: 800;
+}
+.hud-tick[data-state~='lead'] .hud-tick__pos {
+  color: #ffd23f;
+}
+
+/* ---- the giants' feed and the closing clock, top middle */
+.hud-closing {
+  position: absolute;
+  left: 50%;
+  top: 0.8em;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.3em 0.9em 0.3em 0.6em;
+  border-radius: 999px;
+  background: var(--hud-glass);
+  color: var(--sun);
+  font-weight: 800;
+  font-size: 1.15em;
+  font-variant-numeric: tabular-nums;
+  z-index: 2;
+}
+.hud-closing__icon {
+  width: 1.2em;
+  height: 1.2em;
+}
+.hud-closing[data-state='hidden'] {
+  display: none;
+}
+.hud-closing[data-state='urgent'] {
+  background: var(--race);
+  color: #fff;
+  animation: nudge 1s ease-in-out infinite;
+}
+.hud-feed {
+  position: absolute;
+  left: 50%;
+  top: 3.6em;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 0.35em;
+  z-index: 2;
+}
+.hud-feed__row {
+  --pc: var(--sun);
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 1em;
+  white-space: nowrap;
+  padding: 0.25em 1em 0.25em 0.3em;
+  border-radius: 999px;
+  background: rgb(11 14 38 / 0.85);
+  box-shadow: inset 0 0 0 0.14em var(--pc), 0 0.4em 1em -0.3em rgb(0 0 0 / 0.6);
+  animation: slide-up 260ms var(--ease-out) both;
+  transition: opacity 450ms, transform 450ms;
+}
+.hud-feed__icon {
+  width: 1.9em;
+  height: 1.9em;
+  padding: 0.2em;
+  border-radius: 50%;
+  background: var(--pc);
+  flex: none;
+}
+.hud-feed__row b {
+  color: #fff;
+}
+.hud-feed__row.is-out {
+  opacity: 0;
+  transform: translateY(-0.4em);
+}

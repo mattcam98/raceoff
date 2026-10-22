@@ -12,7 +12,8 @@ import { BTN, itemById, PLAYER_LABELS, type GameStatus, type GiantKind, type Hud
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PhoneLink } from '../lib/net';
 import { prefs } from '../lib/storage';
-import { ITEM_ICONS, ROULETTE_ORDER, ordinal, suffix } from '../ui/art';
+import { GIANT_ICONS, ITEM_ICONS, ROULETTE_REEL, ordinal, suffix } from '../ui/art';
+import { Icon } from '../ui/Icon';
 import { GiantPanel } from './Giant';
 import { buzz, canVibrate, hapticsOn, setHaptics } from './haptics';
 
@@ -28,9 +29,9 @@ const motionNeedsTap = () =>
 
 /** What a racer's phone says when a giant picks them. */
 const INCOMING: Record<GiantKind, string> = {
-  butter: '🖐 Giant! Butter ahead',
-  bomb: '🖐 Gobstopper! Dodge the ring',
-  flick: '👉 Flicked forward!',
+  butter: 'Giant! Butter ahead',
+  bomb: 'Gobstopper! Dodge the ring',
+  flick: 'Flicked forward!',
 };
 
 const SEND_MS = 33;
@@ -78,7 +79,6 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   const [pressed, setPressed] = useState({ drift: false, item: false, brake: false, gas: false });
   const [steering, setSteering] = useState(false);
   const [arrowSide, setArrowSide] = useState(0);
-  const [rollIcon, setRollIcon] = useState(0);
   const [tiltError, setTiltError] = useState<string | null>(null);
   const [centred, setCentred] = useState(false);
 
@@ -182,13 +182,6 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       sendNow.current = () => {};
     };
   }, [link, autoGas, mode, autoDrift, smart]);
-
-  // Item roulette on the phone too.
-  useEffect(() => {
-    if (!hud?.rolling) return;
-    const t = window.setInterval(() => setRollIcon((i) => (i + 1) % ROULETTE_ORDER.length), 80);
-    return () => window.clearInterval(t);
-  }, [hud?.rolling]);
 
   // Tilt steering: hold the phone like a wheel. Gravity, turned into screen coordinates, gives the wheel's
   // angle whichever way up the phone is; the angle when tilt was switched on (or recentred) is straight ahead.
@@ -384,7 +377,8 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   };
 
   const charge = hud?.charge ?? 0;
-  const itemIcon = hud?.rolling ? ITEM_ICONS[ROULETTE_ORDER[rollIcon]] : hud?.item ? ITEM_ICONS[hud.item] : '';
+  // The roulette is the same spinning reel as on the TV: a CSS animation, so it costs no renders.
+  const itemIcon = hud?.rolling ? ROULETTE_REEL : hud?.item ? ITEM_ICONS[hud.item] : '';
   const holding = !!hud?.item && !hud.rolling;
   const stunned = hud?.stunned;
   const finished = hud?.finished;
@@ -417,11 +411,11 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         <span className="pad__spacer" />
         {vip && (
           <button className="icon-btn" aria-label="Pause" onClick={() => link.command('pause')}>
-            ⏸
+            <Icon name="pause" />
           </button>
         )}
         <button className="icon-btn" aria-label="Controls" onClick={() => setMenu(true)}>
-          ⚙
+          <Icon name="gear" />
         </button>
       </header>
 
@@ -436,9 +430,16 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         </div>
       </section>
 
-      {hud?.wrongWay && <div className="pad__banner pad__banner--warn">Wrong way!</div>}
+      {hud?.wrongWay && (
+        <div className="pad__banner pad__banner--warn">
+          <Icon name="uturn" /> Wrong way!
+        </div>
+      )}
       {hud?.incoming && !finished && (
-        <div className={`pad__banner pad__banner--giant pad__banner--${hud.incoming === 'flick' ? 'good' : 'warn'}`}>{INCOMING[hud.incoming]}</div>
+        <div className={`pad__banner pad__banner--giant pad__banner--${hud.incoming === 'flick' ? 'good' : 'warn'}`}>
+          <i className="pad__banner-art" dangerouslySetInnerHTML={{ __html: GIANT_ICONS[hud.incoming] }} />
+          {INCOMING[hud.incoming]}
+        </div>
       )}
       {finished &&
         (hud?.giant ? (
@@ -465,10 +466,10 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         {mode === 'buttons' ? (
           <div className="arrows" {...arrowHandlers}>
             <span className={arrowSide < 0 ? 'is-down' : ''} aria-label="Steer left">
-              ◀
+              <Icon name="left" />
             </span>
             <span className={arrowSide > 0 ? 'is-down' : ''} aria-label="Steer right">
-              ▶
+              <Icon name="right" />
             </span>
           </div>
         ) : (

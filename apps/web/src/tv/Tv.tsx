@@ -6,12 +6,15 @@ import { GameView } from '../game3d/view';
 import { api, TvLink, useLink } from '../lib/net';
 import { tvKey } from '../lib/storage';
 import { Loading } from '../App';
+import { Icon } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
 import { Director } from './director';
 import { Hud } from './hud';
 import { Lobby } from './Lobby';
 import { IntroCard, PauseMenu, Podium, Results, Standings } from './Screens';
 import '../styles/tv.css';
+import '../styles/hud.css';
+import '../styles/screens.css';
 
 /** /tv: make a room and move to it. */
 export function NewRoom() {
@@ -171,11 +174,11 @@ function TvRoom({ code, roomKey }: { code: string; roomKey: string }) {
       <div className={`tv__corner${idle && sound ? ' is-idle' : ''}`}>
         {!sound && (
           <button className="pill pill--sound" onClick={enableSound}>
-            🔊 Click for sound
+            <Icon name="sound" /> Click for sound
           </button>
         )}
-        <button className="pill" onClick={toggleFullscreen} title="Full screen (F)">
-          ⛶
+        <button className="pill pill--icon" onClick={toggleFullscreen} title="Full screen (F)" aria-label="Full screen">
+          <Icon name="fullscreen" />
         </button>
       </div>
     </div>

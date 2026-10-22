@@ -7,14 +7,18 @@
 import { GIANT_COST, GIANT_MAX_CHARGE, PLAYER_COLORS, type GiantHud, type GiantKind } from '@raceoff/shared';
 import { useEffect, useState } from 'react';
 import type { PhoneLink } from '../lib/net';
-import { ordinal, portrait } from '../ui/art';
+import { GIANT_ICONS, ITEM_ICONS, ordinal, portrait } from '../ui/art';
+import { Icon } from '../ui/Icon';
 import { buzz } from './haptics';
 
-const MOVES: { kind: GiantKind; icon: string; name: string; what: string }[] = [
-  { kind: 'butter', icon: '🧈', name: 'Butter', what: 'Drops a pat in their lane, ahead of them. Drive over it and spin.' },
-  { kind: 'bomb', icon: '🍬', name: 'Gobstopper', what: 'Lands where they are heading, with a ring to warn them. Dodge it or flip.' },
-  { kind: 'flick', icon: '👉', name: 'Flick', what: 'A friendly flick forward: a burst of speed.' },
+const MOVES: { kind: GiantKind; name: string; what: string }[] = [
+  { kind: 'butter', name: 'Butter', what: 'Drops a pat in their lane, ahead of them. Drive over it and spin.' },
+  { kind: 'bomb', name: 'Gobstopper', what: 'Lands where they are heading, with a ring to warn them. Dodge it or flip.' },
+  { kind: 'flick', name: 'Flick', what: 'A friendly flick forward: a burst of speed.' },
 ];
+
+/** Drawn art (ui/art.ts), not emoji, so it looks the same on every phone. */
+const Art = ({ svg, className = '' }: { svg: string; className?: string }) => <i className={`giant__art ${className}`} aria-hidden dangerouslySetInnerHTML={{ __html: svg }} />;
 
 export function GiantPanel({ link, giant, place, vip }: { link: PhoneLink; giant: GiantHud; place?: number | null; vip: boolean }) {
   const [kind, setKind] = useState<GiantKind>('butter');
@@ -36,15 +40,13 @@ export function GiantPanel({ link, giant, place, vip }: { link: PhoneLink; giant
     if (!ready) return setSaid('Recharging…');
     link.giant(kind, t.k);
     buzz('item');
-    setSaid(kind === 'flick' ? `👉 Flicked ${t.name}!` : `${move.icon} ${move.name} for ${t.name}!`);
+    setSaid(kind === 'flick' ? `Flicked ${t.name}!` : `${move.name} for ${t.name}!`);
   };
 
   return (
     <section className="giant">
       <header className="giant__head">
-        <span className="giant__hand" aria-hidden>
-          🖐
-        </span>
+        <Art svg={GIANT_ICONS.hand} className="giant__hand" />
         <div>
           <h2>You're the giant!</h2>
           <p>{place ? `You finished ${ordinal(place)}. Now reach into the race.` : 'Not in this race? Reach into it from here.'}</p>
@@ -65,7 +67,7 @@ export function GiantPanel({ link, giant, place, vip }: { link: PhoneLink; giant
             className={`giant__move giant__move--${m.kind}${kind === m.kind ? ' is-on' : ''}`}
             onClick={() => (buzz('tick'), setKind(m.kind))}
           >
-            <span aria-hidden>{m.icon}</span>
+            <Art svg={GIANT_ICONS[m.kind]} />
             <b>{m.name}</b>
             <small>{'●'.repeat(GIANT_COST[m.kind])}</small>
           </button>
@@ -74,10 +76,14 @@ export function GiantPanel({ link, giant, place, vip }: { link: PhoneLink; giant
       <p className="giant__what">{said ?? move.what}</p>
       {(giant.endsIn !== null || canEnd) && (
         <div className="giant__end">
-          {giant.endsIn !== null && <span>⏱ Race ends in {giant.endsIn}s</span>}
+          {giant.endsIn !== null && (
+            <span>
+              <Icon name="timer" /> Race ends in {giant.endsIn}s
+            </span>
+          )}
           {canEnd && (
             <button className="btn btn--ghost btn--tiny" onClick={() => link.command('skip')}>
-              Finish the race now ⏭
+              Finish the race now <Icon name="skip" />
             </button>
           )}
         </div>
@@ -96,7 +102,7 @@ export function GiantPanel({ link, giant, place, vip }: { link: PhoneLink; giant
               <i dangerouslySetInnerHTML={{ __html: portrait(t.character) }} />
               <span>{t.name}</span>
               {t.cpu ? <small>CPU</small> : <small className="giant__player">PLAYER</small>}
-              <em aria-hidden>{t.safe ? '🛡' : move.icon}</em>
+              <Art svg={t.safe ? ITEM_ICONS.shield : GIANT_ICONS[kind]} className="giant__go" />
             </button>
           </li>
         ))}

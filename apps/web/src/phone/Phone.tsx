@@ -7,7 +7,9 @@ import { Loading } from '../App';
 import { api, PhoneLink, useLink } from '../lib/net';
 import { prefs, seat as seatStore, type Seat } from '../lib/storage';
 import { formatTime, ordinal, portrait } from '../ui/art';
+import { Icon } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
+import { Face, Medal } from '../ui/Racer';
 import { Controller } from './Controller';
 import { GiantPanel } from './Giant';
 import { buzz } from './haptics';
@@ -301,7 +303,7 @@ function LeaveButton({ link }: { link: PhoneLink }) {
     );
   return (
     <button className="icon-btn" aria-label="Leave room" onClick={() => setAsk(true)}>
-      ✕
+      <Icon name="close" />
     </button>
   );
 }
@@ -411,7 +413,7 @@ function After({ link, me, game, vip, room }: { link: PhoneLink; me: PlayerInfo;
         {mine && game.phase !== 'results' && <p className="after-stats">{mine.total} points</p>}
         {mineRecords.map((r, i) => (
           <p key={i} className="after-record">
-            🏆 New {r.kind === 'lap' ? 'lap' : 'track'} record: {formatTime(r.time)}
+            <Icon name="trophy" /> New {r.kind === 'lap' ? 'lap' : 'track'} record: {formatTime(r.time)}
           </p>
         ))}
       </section>
@@ -420,8 +422,8 @@ function After({ link, me, game, vip, room }: { link: PhoneLink; me: PlayerInfo;
           const slot = room.players.find((p) => p.id === s.id)?.slot;
           return (
             <li key={s.id} className={s.id === me.id ? 'is-me' : ''} style={{ '--pc': slot !== undefined ? PLAYER_COLORS[slot] : 'transparent' } as React.CSSProperties}>
-              <span>{s.place}</span>
-              <i dangerouslySetInnerHTML={{ __html: portrait(s.character) }} />
+              <Medal place={s.place} />
+              <Face character={s.character} />
               <b>{s.name}</b>
               <em>{s.total}</em>
             </li>

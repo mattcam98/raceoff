@@ -2,8 +2,10 @@ import { TRACKS, type RecordsView } from '@raceoff/shared';
 import { useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import { api } from '../lib/net';
-import { formatTime, portrait } from '../ui/art';
+import { formatTime } from '../ui/art';
+import { Icon } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
+import { Face, Medal } from '../ui/Racer';
 
 export function Records() {
   const [data, setData] = useState<RecordsView | null>(null);
@@ -61,7 +63,9 @@ export function RecordsBoard({ data, compact = false }: { data: RecordsView; com
         })}
       </section>
       <section className="records__players">
-        <h3>Champions</h3>
+        <h3>
+          <Icon name="trophy" /> Champions
+        </h3>
         {data.players.length === 0 ? (
           <p className="dim">Race to get on the board.</p>
         ) : (
@@ -76,9 +80,14 @@ export function RecordsBoard({ data, compact = false }: { data: RecordsView; com
               </tr>
             </thead>
             <tbody>
-              {data.players.slice(0, compact ? 6 : 30).map((p) => (
+              {data.players.slice(0, compact ? 6 : 30).map((p, i) => (
                 <tr key={p.name}>
-                  <td>{p.name}</td>
+                  <td>
+                    <span className="champ">
+                      <Medal place={i + 1} />
+                      {p.name}
+                    </span>
+                  </td>
                   <td>{p.cups}</td>
                   <td>{p.wins}</td>
                   <td>{p.podiums}</td>
@@ -96,7 +105,7 @@ export function RecordsBoard({ data, compact = false }: { data: RecordsView; com
 function Holder({ name, character, time }: { name: string; character: string; time: number }) {
   return (
     <span className="holder">
-      <i dangerouslySetInnerHTML={{ __html: portrait(character) }} />
+      <Face character={character} />
       <span>{name}</span>
       <b>{formatTime(time)}</b>
     </span>
