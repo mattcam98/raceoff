@@ -553,4 +553,68 @@ export const tex = {
       }
       return finish(c);
     }),
+
+  /** Painted plaster: a flat colour with the faint unevenness of a real wall. */
+  plaster: (color: string) =>
+    cached(`plaster${color}`, () => {
+      const { c, g } = canvas(256, 256);
+      g.fillStyle = color;
+      g.fillRect(0, 0, 256, 256);
+      speckle(g, 256, 256, 5000, ['rgba(0,0,0,0.05)', 'rgba(255,255,255,0.06)'], [1, 3], 81);
+      const r = rand(82);
+      for (let i = 0; i < 30; i++) {
+        const x = r() * 256;
+        const y = r() * 256;
+        const grd = g.createRadialGradient(x, y, 0, x, y, 20 + r() * 50);
+        grd.addColorStop(0, r() < 0.5 ? 'rgba(0,0,0,0.035)' : 'rgba(255,255,255,0.035)');
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grd;
+        g.fillRect(0, 0, 256, 256);
+      }
+      return finish(c);
+    }),
+
+  /** Regency-stripe wallpaper: stripes run up the wall (u across, v up). */
+  wallStripes: (a: string, b: string) =>
+    cached(`wallstripes${a}${b}`, () => {
+      const { c, g } = canvas(256, 256);
+      g.fillStyle = a;
+      g.fillRect(0, 0, 256, 256);
+      g.fillStyle = b;
+      g.fillRect(0, 0, 80, 256);
+      g.fillRect(150, 0, 10, 256);
+      g.fillRect(176, 0, 10, 256);
+      speckle(g, 256, 256, 3000, ['rgba(0,0,0,0.04)', 'rgba(255,255,255,0.05)'], [1, 2], 83);
+      return finish(c);
+    }),
+
+  /** Painted cinder blocks, for the garage. One texture is two courses of two blocks. */
+  cinder: () =>
+    cached('cinder', () => {
+      const { c, g } = canvas(256, 256);
+      g.fillStyle = '#5d6170';
+      g.fillRect(0, 0, 256, 256);
+      g.fillStyle = '#6b7080';
+      for (let row = 0; row < 2; row++)
+        for (let col = -1; col < 2; col++) {
+          const x = col * 128 + (row % 2) * 64 + 3;
+          g.fillRect(x, row * 128 + 3, 122, 122);
+        }
+      speckle(g, 256, 256, 9000, ['rgba(0,0,0,0.18)', 'rgba(255,255,255,0.08)'], [1, 3], 84);
+      return finish(c);
+    }),
+
+  /** Tongue-and-groove wood panelling, boards running up the wall. */
+  panelling: (color: string) =>
+    cached(`panel${color}`, () => {
+      const { c, g } = canvas(256, 256);
+      g.fillStyle = color;
+      g.fillRect(0, 0, 256, 256);
+      speckle(g, 256, 256, 2000, ['rgba(0,0,0,0.05)', 'rgba(255,255,255,0.05)'], [1, 3], 85);
+      g.fillStyle = 'rgba(0,0,0,0.28)';
+      for (let x = 0; x < 256; x += 32) g.fillRect(x, 0, 3, 256);
+      g.fillStyle = 'rgba(255,255,255,0.2)';
+      for (let x = 3; x < 256; x += 32) g.fillRect(x, 0, 2, 256);
+      return finish(c);
+    }),
 };

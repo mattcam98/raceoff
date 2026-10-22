@@ -10,6 +10,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { at, bake, ball, box, cone, cyl, decal, disposeTree, group, mat, slab } from './kit';
 import { buildProp } from './props';
+import { roomUniforms } from './rooms';
 import { bumpFrom, roughFrom, withRelief } from './surface';
 import { tex } from './textures';
 import { themeFor, type Theme } from './themes';
@@ -483,6 +484,8 @@ function zoneMaterial(look: string | undefined, surface: string): THREE.Material
       return liquid('#c7701a', { opacity: 0.9 });
     case 'coffee':
       return liquid('#3a2212', { opacity: 0.94 });
+    case 'ink':
+      return liquid('#1b2a6b', { roughness: 0.05, opacity: 0.95 });
     case 'oil':
     case 'slick':
       return liquid('#0b0b10', { roughness: 0.03, iridescence: 1, iridescenceIOR: 1.5, iridescenceThicknessRange: [200, 600] });
@@ -705,7 +708,7 @@ export function buildWorld(track: Track): World {
     m.receiveShadow = true;
     stat.add(m);
   }
-  stat.add(theme.backdrop(track));
+  stat.add(theme.backdrop(track, theme));
 
   for (const p of track.paths) {
     stat.add(roadMesh(track, p, theme));
@@ -783,6 +786,7 @@ export function buildWorld(track: Track): World {
     theme,
     update(time, dt, hazards) {
       padTex.offset.y = (padTex.offset.y - dt * 1.6) % 1;
+      roomUniforms.uTime.value += dt;
       // Countdown lights: one more red each second from three to go, then all green, fading out after the start.
       const lit = time < -3 ? 0 : time < 0 ? Math.min(3, Math.floor(time + 4)) : 3;
       start.lamps.forEach((m, i) => {
