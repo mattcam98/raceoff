@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import type { Track } from '@raceoff/game';
 import { at, box, cyl, group, mat } from './kit';
 import type { Grade } from './post';
+import type { Relief } from './surface';
 import { buildProp } from './props';
 import { tex } from './textures';
 
@@ -22,8 +23,12 @@ export interface Theme {
   /** Material for the floor the track sits on, and its texture repeat in world units. */
   ground: () => THREE.Material;
   groundRepeat: number;
+  /** The floor's surface relief and how its gloss varies: grout is matte, glazed tile glossy. */
+  groundRelief: Relief;
   road: { base: string; line: string; edge: string; dash: boolean };
   roughRoad: () => THREE.Material;
+  /** The sides of raised road, down to the floor: what it is built up on. */
+  skirt: () => THREE.Material;
   curb: [string, string];
   wall: WallStyle;
   /** Builds the room around the track. */
@@ -118,8 +123,10 @@ export const THEMES: Record<string, Theme> = {
     hemi: { sky: '#fff3df', ground: '#b98c62', intensity: 1.1 },
     ground: () => mat('#ffffff', { map: tex.gingham('#e8414b', '#ffffff') }),
     groundRepeat: 36,
+    groundRelief: { strength: 0.8, rough: [0.95, 0.8] },
     road: { base: '#3c4152', line: '#ffffff', edge: '#ffd23f', dash: true },
     roughRoad: () => mat('#ffffff', { map: tex.gingham('#e8414b', '#ffffff') }),
+    skirt: () => mat('#ffffff', { map: tex.book('#c0392b') }),
     curb: ['#e63946', '#ffffff'],
     wall: 'sugar',
     look: lookWith({ tint: '#fff4e6', saturation: 1.12 }),
@@ -143,8 +150,10 @@ export const THEMES: Record<string, Theme> = {
     hemi: { sky: '#e8edff', ground: '#8c6b4a', intensity: 1.15 },
     ground: () => mat('#ffffff', { map: tex.wood('#a8784a', '#7a5130', 2) }),
     groundRepeat: 90,
+    groundRelief: { strength: 2.5, blur: 1, rough: [0.7, 0.45] },
     road: { base: '#2f3445', line: '#ffffff', edge: '#7fd1ff', dash: true },
     roughRoad: () => mat('#ffffff', { map: tex.paper() }),
+    skirt: () => mat('#ffffff', { map: tex.book('#3d5a80') }),
     curb: ['#3d9bff', '#ffffff'],
     wall: 'pencil',
     look: lookWith({ tint: '#f6f7ff' }),
@@ -164,8 +173,10 @@ export const THEMES: Record<string, Theme> = {
     hemi: { sky: '#eafcff', ground: '#9fd3df', intensity: 1.25 },
     ground: () => mat('#ffffff', { map: tex.tiles('#eaf6f8', '#9fc2cc', 4) }),
     groundRepeat: 24,
+    groundRelief: { strength: 4, blur: 1, rough: [0.85, 0.12] },
     road: { base: '#4a5a8c', line: '#ffffff', edge: '#ffffff', dash: false },
     roughRoad: () => mat('#ffffff', { map: tex.stripes('#9ee1ff', '#ffffff', 10) }),
+    skirt: () => mat('#ffffff', { map: tex.tiles('#eaf6f8', '#9fc2cc', 4), shiny: 70 }),
     curb: ['#ff8fab', '#ffffff'],
     wall: 'soap',
     look: lookWith({ tint: '#f2fbff', saturation: 1.08, bloom: 0.4 }),
@@ -194,8 +205,10 @@ export const THEMES: Record<string, Theme> = {
     hemi: { sky: '#bfe6ff', ground: '#5f9c45', intensity: 1.05 },
     ground: () => mat('#ffffff', { map: tex.grass() }),
     groundRepeat: 26,
+    groundRelief: { strength: 2.5, invert: true },
     road: { base: '#474a55', line: '#ffffff', edge: '#ffffff', dash: true },
     roughRoad: () => mat('#ffffff', { map: tex.sand() }),
+    skirt: () => mat('#ffffff', { map: tex.sand() }),
     curb: ['#ff7a1a', '#ffffff'],
     wall: 'stone',
     look: lookWith({ tint: '#fffaf0', saturation: 1.15 }, { sun: 1.2 }),
@@ -222,8 +235,10 @@ export const THEMES: Record<string, Theme> = {
     hemi: { sky: '#ffe9f7', ground: '#8f6fd6', intensity: 1.15 },
     ground: () => mat('#ffffff', { map: tex.carpet('#6b5bd6', '#8576ee') }),
     groundRepeat: 30,
+    groundRelief: { strength: 1.5, rough: [0.95, 0.9] },
     road: { base: '#3b3561', line: '#ffd23f', edge: '#ffffff', dash: true },
     roughRoad: () => mat('#ffffff', { map: tex.rug() }),
+    skirt: () => mat('#ffffff', { map: tex.stripes('#ffd166', '#ef476f', 6), shiny: 30 }),
     curb: ['#ffd23f', '#3d9bff'],
     wall: 'block',
     look: lookWith({ tint: '#fff2fb', saturation: 1.14 }),
@@ -253,8 +268,10 @@ export const THEMES: Record<string, Theme> = {
     hemi: { sky: '#7d8fd6', ground: '#3a2f2a', intensity: 1.0 },
     ground: () => mat('#ffffff', { map: tex.concrete() }),
     groundRepeat: 70,
+    groundRelief: { strength: 1.5, rough: [0.95, 0.55] },
     road: { base: '#262833', line: '#ffd23f', edge: '#ffd23f', dash: true },
     roughRoad: () => mat('#ffffff', { map: tex.concrete() }),
+    skirt: () => mat('#ffffff', { map: tex.wood('#a77b4f', '#7a5233', 3) }),
     curb: ['#ffd23f', '#1b1b1f'],
     wall: 'tire',
     night: true,

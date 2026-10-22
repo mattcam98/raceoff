@@ -53,6 +53,7 @@ interface Chase {
 const SPARK_COLORS = ['#fff4d6', '#5ec8ff', '#ffa630', '#c77dff'];
 const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
+const tmpV3 = new THREE.Vector3();
 const tmpColor = new THREE.Color();
 
 export class GameView {
@@ -208,6 +209,7 @@ export class GameView {
       return rig;
     });
     this.sparkLevels = race.karts.map(() => 0);
+    if (!this.highQuality) this.movingShadows(false);
     this.fx.clear();
     this.skids.clear();
     this.layout = layout;
@@ -283,6 +285,16 @@ export class GameView {
     this.podiumCenter = new THREE.Vector3(base.x, base.y + 2, base.z);
     this.hidden = new Set(race.karts.map((k) => k.index).filter((i) => !top.includes(i)));
     this.cinemaKart = top[0] ?? 0;
+    this.shadowsDirty = true;
+  }
+
+  /** A shadow map drawn once cannot hold moving things: on slow machines, karts and hazards stop casting. */
+  private movingShadows(on: boolean) {
+    for (const r of this.rigs) r.root.traverse((o) => (o.castShadow &&= on));
+    this.items?.group.traverse((o) => (o.castShadow &&= on));
+    this.world?.group.traverse((o) => {
+      if (!o.userData.static) o.castShadow &&= on;
+    });
     this.shadowsDirty = true;
   }
 
@@ -428,8 +440,6 @@ export class GameView {
     this.skids.update(dt);
 
     // The sun's shadows are drawn once per frame, shared by every viewport.
-    // Only the scenery casts real shadows (karts and hazards carry soft blobs), so the shadow map is drawn once
-    // per track rather than every frame.
     this.post.begin();
     const views = this.postViews;
     views.length = 0;
@@ -447,7 +457,8 @@ export class GameView {
       cam.aspect = r.w / r.h;
       cam.updateProjectionMatrix();
       this.fx.setScale(r.h * pr, cam.fov);
-      this.renderer.shadowMap.needsUpdate = first && this.shadowsDirty;
+      // Karts and hazards cast real shadows, so the map is redrawn each frame; slow machines keep it for scenery only.
+      this.renderer.shadowMap.needsUpdate = first && (this.shadowsDirty || this.highQuality);
       if (first) this.shadowsDirty = false;
       first = false;
       this.renderer.render(this.scene, cam);
@@ -473,6 +484,7 @@ export class GameView {
     if (typical > 21 && this.pixelRatio <= 0.75 && this.highQuality) {
       this.highQuality = false;
       this.post.setQuality(false);
+      this.movingShadows(false);
       return;
     }
     if (typical > 21 && this.pixelRatio > 0.6) next = Math.max(0.6, this.pixelRatio - 0.15);
@@ -574,10 +586,16 @@ export class GameView {
   private focusFor(r: ViewportRect, cam: THREE.PerspectiveCamera) {
     if (r.kart >= 0) return 70;
     if (r.kart === -1) return cam.position.distanceTo(this.overviewLook) * 1.25;
-    if (this.cameraMode === 'intro') return 90;
+    // The wide shot of the table is a miniature: focus on the table, the room around it melts away.
+    if (this.cameraMode === 'intro') return this.introT < 2 ? cam.position.distanceTo(tmpV3.set(...this.trackCentre())) * 1.1 : 70;
     const target = this.podiumCenter && this.cameraMode === 'podium' ? this.podiumCenter : this.rigs[this.cinemaKart]?.root.position;
     // Close on the kart and the room melts away behind it: the miniature look.
     return target ? cam.position.distanceTo(target) * 1.6 : 60;
+  }
+
+  private trackCentre(): [number, number, number] {
+    const b = this.track!.bounds;
+    return [(b.minX + b.maxX) / 2, this.track!.def.floorY, (b.minZ + b.maxZ) / 2];
   }
 
   private speedFor(r: ViewportRect) {
@@ -618,20 +636,37 @@ export class GameView {
     this.overview.lookAt(this.overviewLook);
   }
 
-  /** Swoop along the track toward the start line, ending behind the grid. */
+  /**
+   * The intro: a high, slow crane round the whole table to show where we are and how small the karts are, then
+   * a swoop down the start straight that lands just behind the grid, close to where the chase cameras start.
+   */
   private updateIntro(dt: number) {
     const track = this.track!;
     this.introT += dt;
-    const t = clamp(this.introT / 4.2, 0, 1);
-    const e = t * t * (3 - 2 * t);
-    const s = lerp(-150, -40, e);
-    const p = track.pointAt(s, 0);
-    const ahead = track.pointAt(s + 40, 0);
-    const h = lerp(46, 12, e);
-    const side = Math.sin(e * Math.PI) * 25;
-    this.cinema.position.set(p.x + Math.cos(p.h) * side, p.y + h, p.z - Math.sin(p.h) * side);
-    this.cinema.lookAt(ahead.x, ahead.y + 2, ahead.z);
-    this.cinema.fov = 60;
+    const T = 4.2;
+    const t = clamp(this.introT / T, 0, 1);
+    const smooth = (x: number) => x * x * x * (x * (x * 6 - 15) + 10);
+    const b = track.bounds;
+    const cx = (b.minX + b.maxX) / 2;
+    const cz = (b.minZ + b.maxZ) / 2;
+    const ext = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
+    const start = track.pointAt(0, 0);
+    // The wide shot circles from behind the start line's side of the table.
+    const a = Math.atan2(start.x - cx, start.z - cz) + 0.9 - smooth(Math.min(1, t / 0.6)) * 0.8;
+    const wide = tmpV.set(cx + Math.sin(a) * ext * 0.62, track.def.floorY + ext * 0.42, cz + Math.cos(a) * ext * 0.62);
+    const wideLook = tmpV2.set(cx, track.def.floorY, cz);
+    // The landing: behind the grid and a little above it, looking down the straight.
+    const grid = track.pointAt(-22, 0);
+    const ahead = track.pointAt(6, 0);
+    const land = new THREE.Vector3(grid.x, grid.y + 5, grid.z);
+    const landLook = new THREE.Vector3(ahead.x, ahead.y + 1.5, ahead.z);
+    const k = smooth(clamp((t - 0.45) / 0.55, 0, 1));
+    // Arc over rather than cutting through: lift the path in the middle of the swoop.
+    const lift = Math.sin(k * Math.PI) * ext * 0.08;
+    this.cinema.position.lerpVectors(wide, land, k);
+    this.cinema.position.y += lift;
+    this.cinema.lookAt(wideLook.lerp(landLook, k));
+    this.cinema.fov = lerp(42, 62, k);
   }
 
   /** Development aid: pin the cinematic camera somewhere, looking at something. */

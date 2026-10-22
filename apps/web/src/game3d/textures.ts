@@ -233,21 +233,72 @@ export const tex = {
       return finish(c);
     }),
 
-  /** Road surface: u runs across the road, v along it. */
+  /** Road surface: u runs across the road, v along it. Asphalt with real aggregate, worn lanes and painted lines. */
   road: (base: string, line: string, dash: boolean, edge: string) =>
     cached(`road${base}${line}${dash}${edge}`, () => {
-      const { c, g } = canvas(256, 512);
+      const W = 512;
+      const H = 1024;
+      const { c, g } = canvas(W, H);
       g.fillStyle = base;
-      g.fillRect(0, 0, 256, 512);
-      speckle(g, 256, 512, 2600, ['rgba(255,255,255,0.08)', 'rgba(0,0,0,0.12)'], [1, 3], 51);
-      // Edge lines.
-      g.fillStyle = edge;
-      g.fillRect(6, 0, 8, 512);
-      g.fillRect(242, 0, 8, 512);
+      g.fillRect(0, 0, W, H);
+      const r = rand(51);
+      // Broad tonal patches, so the surface never looks like flat paint. Drawn wrapped, so it tiles.
+      for (let i = 0; i < 40; i++) {
+        const x = r() * W;
+        const y = r() * H;
+        const rad = 40 + r() * 120;
+        for (const oy of [-H, 0, H]) {
+          const grd = g.createRadialGradient(x, y + oy, 0, x, y + oy, rad);
+          const dark = r() < 0.5;
+          grd.addColorStop(0, dark ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.05)');
+          grd.addColorStop(1, 'rgba(0,0,0,0)');
+          g.fillStyle = grd;
+          g.fillRect(0, 0, W, H);
+        }
+      }
+      // The two worn lanes karts actually drive on are a little darker and smoother.
+      for (const lx of [0.33, 0.67]) {
+        const grd = g.createLinearGradient(W * (lx - 0.12), 0, W * (lx + 0.12), 0);
+        grd.addColorStop(0, 'rgba(0,0,0,0)');
+        grd.addColorStop(0.5, 'rgba(0,0,0,0.1)');
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grd;
+        g.fillRect(0, 0, W, H);
+      }
+      // Aggregate: thousands of tiny stones, light and dark.
+      speckle(g, W, H, 26000, ['rgba(255,255,255,0.22)', 'rgba(255,255,255,0.12)', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.18)'], [1, 2.6], 52);
+      // A few hairline cracks.
+      g.strokeStyle = 'rgba(0,0,0,0.25)';
+      g.lineWidth = 1;
+      for (let i = 0; i < 9; i++) {
+        let x = r() * W;
+        let y = r() * H;
+        g.beginPath();
+        g.moveTo(x, y);
+        for (let k = 0; k < 8; k++) {
+          x += (r() - 0.5) * 30;
+          y += (r() - 0.3) * 26;
+          g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+      // Painted lines, worn through in places so the asphalt shows.
+      const paint = (x: number, y: number, w: number, h: number, color: string) => {
+        g.fillStyle = color;
+        g.fillRect(x, y, w, h);
+        const rr = rand(Math.round(x * 13 + y));
+        g.fillStyle = base;
+        for (let i = 0; i < (w * h) / 40; i++) {
+          g.globalAlpha = 0.25 + rr() * 0.5;
+          g.fillRect(x + rr() * w, y + rr() * h, 1 + rr() * 2, 1 + rr() * 2);
+        }
+        g.globalAlpha = 1;
+      };
+      paint(10, 0, 14, H, edge);
+      paint(W - 24, 0, 14, H, edge);
       if (dash) {
-        g.fillStyle = line;
-        g.fillRect(124, 0, 8, 160);
-        g.fillRect(124, 256, 8, 160);
+        paint(W / 2 - 7, 40, 14, 300, line);
+        paint(W / 2 - 7, 552, 14, 300, line);
       }
       return finish(c);
     }),
