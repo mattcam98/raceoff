@@ -199,6 +199,18 @@ a {
   backdrop-filter: blur(8px);
   box-shadow: inset 0 0 0 1px var(--line);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pill--icon {
+  padding: 8px;
+  display: grid;
+  place-items: center;
+}
+.pill .icon {
+  width: 1.25em;
+  height: 1.25em;
 }
 .pill--warn {
   background: rgb(255 77 46 / 0.85);
@@ -525,6 +537,11 @@ input[type='range'] {
 .records-page header a {
   text-decoration: none;
 }
+.records-page .title {
+  font-style: italic;
+  font-weight: 900;
+  font-size: 2.2rem;
+}
 .records {
   display: grid;
   gap: 18px;
@@ -535,10 +552,10 @@ input[type='range'] {
   gap: 12px;
 }
 .rec-track {
-  background: var(--glass);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tc) 22%, transparent), transparent 70px), var(--glass);
   border-radius: var(--radius);
   padding: 14px 16px;
-  box-shadow: inset 4px 0 0 var(--tc), inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 4px 0 var(--tc), inset 0 0 0 1px var(--line);
 }
 .rec-track h3 {
   margin: 0 0 8px;
@@ -565,10 +582,9 @@ input[type='range'] {
   align-items: center;
   gap: 8px;
 }
-.holder i {
-  width: 26px;
-  height: 26px;
-  display: block;
+.holder .face {
+  width: 28px;
+  height: 28px;
 }
 .holder b {
   margin-left: auto;
@@ -596,6 +612,17 @@ input[type='range'] {
 .records__players h3 {
   margin: 0 0 8px;
   font-family: var(--font-display);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.champ {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.champ .medal {
+  font-size: 0.85rem;
 }
 .records__players table {
   width: 100%;
@@ -675,5 +702,123 @@ input[type='range'] {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------- icons */
+
+/* An interface glyph (ui/icons.ts) sized to its text. */
+.icon {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  flex: none;
+  vertical-align: -0.22em;
+}
+.icon svg,
+.glyph {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* The item roulette (ROULETTE_REEL in ui/art.ts): a column of icons sliding up, twice over, so it loops. */
+.reel {
+  display: block;
+  animation: reel-spin 0.55s linear infinite;
+}
+.reel i {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 4%;
+}
+.reel svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+@keyframes reel-spin {
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+/* ---------------------------------------------------------------- racers (ui/Racer.tsx) */
+
+/* A finishing place: gold, silver and bronze discs, then a plain italic number. */
+.medal {
+  display: grid;
+  place-items: center;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 900;
+  font-size: 1.05em;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.medal--1,
+.medal--2,
+.medal--3 {
+  color: #2a1c00;
+  box-shadow: inset 0 -0.16em 0 rgb(0 0 0 / 0.25), inset 0 0 0 0.12em rgb(255 255 255 / 0.45), 0 0.12em 0 rgb(0 0 0 / 0.35);
+}
+.medal--1 {
+  background: radial-gradient(circle at 35% 30%, #fff3b0, #ffd23f 45%, #e0a40c);
+}
+.medal--2 {
+  background: radial-gradient(circle at 35% 30%, #ffffff, #d8dfec 45%, #a5afc4);
+}
+.medal--3 {
+  background: radial-gradient(circle at 35% 30%, #ffd9b8, #f0a462 45%, #c06f2c);
+}
+
+/* A portrait on a tile in the character's colour. */
+.face {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 30%;
+  background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--cc) 30%, #fff), color-mix(in srgb, var(--cc) 55%, #1c2150));
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.25);
+}
+.face svg {
+  width: 86%;
+  height: 86%;
+  display: block;
+}
+
+.chip {
+  display: inline-block;
+  font-weight: 900;
+  font-size: 0.85em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.3em 0.85em;
+  border-radius: 999px;
+  background: var(--glass-strong);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.chip--track {
+  background: var(--tc, var(--race));
+  box-shadow: 0 0.15em 0 rgb(0 0 0 / 0.35);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.35);
+}
+
+@keyframes slam-in {
+  from {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }

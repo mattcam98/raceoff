@@ -8,22 +8,56 @@ import { characterById } from '@raceoff/shared';
 const svg = (body: string, vb = '0 0 100 100') => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" aria-hidden="true">${body}</svg>`;
 
 const OUT = 'stroke="#1b1740" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"';
+/** Item icons share one look: a 6-unit ink outline, flat bright fills and a white gloss at the top left. */
+const INK = 'stroke="#1b1740" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"';
+const GLOSS = (x: number, y: number, rx = 9, ry = 6, rot = -30) =>
+  `<ellipse cx="${x}" cy="${y}" rx="${rx}" ry="${ry}" transform="rotate(${rot} ${x} ${y})" fill="#fff" opacity=".75"/>`;
+const bolt = (x: number, y: number, k = 1) =>
+  `<path d="M${x + 4 * k} ${y - 14 * k} L${x - 7 * k} ${y + 2 * k} H${x} L${x - 4 * k} ${y + 14 * k} L${x + 7 * k} ${y - 2 * k} H${x} Z" fill="#ffd23f" stroke="#1b1740" stroke-width="${3 * k}" stroke-linejoin="round"/>`;
+const ballAt = (x: number, y: number, r: number) =>
+  `<circle cx="${x}" cy="${y}" r="${r}" fill="#3ddc84" ${INK}/><path d="M${x - r * 0.8} ${y - r * 0.25} Q${x} ${y + r * 0.35} ${x + r * 0.8} ${y - r * 0.25}" fill="none" stroke="#fff" stroke-width="${r * 0.2}" stroke-linecap="round"/>${GLOSS(x - r * 0.38, y - r * 0.5, r * 0.26, r * 0.16)}`;
+const canAt = (x: number, y: number, w: number, h: number) =>
+  `<rect x="${x - w / 2}" y="${y - h / 2}" width="${w}" height="${h}" rx="${w * 0.28}" fill="#ff4d2e" ${INK}/><rect x="${x - w * 0.22}" y="${y - h / 2 - 9}" width="${w * 0.44}" height="10" rx="3" fill="#b8bfcc" ${INK}/>${bolt(x, y + 2, w / 44)}<path d="M${x - w * 0.28} ${y - h * 0.3} V${y - h * 0.05}" stroke="#fff" stroke-width="${w * 0.12}" stroke-linecap="round" opacity=".7"/>`;
+/** A star of `r` around 50,52. */
+const star = (r: number) => {
+  const pts: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const rr = i % 2 ? r * 0.48 : r;
+    pts.push(`${(50 + Math.cos(a) * rr).toFixed(1)} ${(53 + Math.sin(a) * rr).toFixed(1)}`);
+  }
+  return `M${pts.join(' L')} Z`;
+};
 
 export const ITEM_ICONS: Record<string, string> = {
-  ball: svg(`<circle cx="50" cy="52" r="36" fill="#3ddc84" ${OUT}/><path d="M18 40 Q50 58 82 40 M22 68 Q50 50 78 68" fill="none" stroke="#fff" stroke-width="8"/><circle cx="38" cy="34" r="7" fill="#fff" opacity=".7"/>`),
-  ball3: svg(`<g ${OUT}><circle cx="30" cy="62" r="20" fill="#3ddc84"/><circle cx="70" cy="62" r="20" fill="#3ddc84"/><circle cx="50" cy="30" r="20" fill="#3ddc84"/></g><g fill="#fff" opacity=".75"><circle cx="24" cy="56" r="5"/><circle cx="64" cy="56" r="5"/><circle cx="44" cy="24" r="5"/></g>`),
-  seeker: svg(`<ellipse cx="50" cy="58" rx="30" ry="24" fill="#ffd23f" ${OUT}/><path d="M38 36 V80 M54 34 V82" stroke="#1b1740" stroke-width="9"/><ellipse cx="34" cy="26" rx="16" ry="11" fill="#dff6ff" ${OUT}/><ellipse cx="64" cy="24" rx="16" ry="11" fill="#dff6ff" ${OUT}/><circle cx="74" cy="54" r="5" fill="#1b1740"/><path d="M20 62 L8 66" ${OUT}/>`),
-  oil: svg(`<path d="M50 14 C64 36 78 48 78 64 A28 28 0 0 1 22 64 C22 48 36 36 50 14Z" fill="#232032" ${OUT}/><path d="M36 60 Q40 72 52 74" stroke="#8a7dff" stroke-width="6" fill="none" stroke-linecap="round"/>`),
-  bomb: svg(`<circle cx="46" cy="58" r="30" fill="#2b2840" ${OUT}/><rect x="40" y="20" width="16" height="12" rx="3" fill="#9aa0ab" ${OUT}/><path d="M56 24 Q68 10 78 16" fill="none" ${OUT}/><circle cx="80" cy="14" r="8" fill="#ffd23f"/><circle cx="36" cy="48" r="7" fill="#fff" opacity=".5"/>`),
-  plane: svg(`<path d="M10 54 L90 18 L58 86 L48 60 Z" fill="#ffffff" ${OUT}/><path d="M48 60 L90 18" ${OUT} fill="none"/><path d="M48 60 L40 78 L58 86" fill="#ff4d6d" ${OUT}/>`),
-  shield: svg(`<circle cx="50" cy="50" r="38" fill="#7fd8ff" fill-opacity=".55" ${OUT}/><path d="M30 40 A22 22 0 0 1 52 22" stroke="#fff" stroke-width="8" fill="none" stroke-linecap="round"/><circle cx="66" cy="66" r="6" fill="#fff" opacity=".8"/>`),
-  nitro: svg(`<rect x="28" y="22" width="44" height="64" rx="12" fill="#ff4d2e" ${OUT}/><rect x="40" y="10" width="20" height="14" rx="4" fill="#9aa0ab" ${OUT}/><path d="M54 36 L40 58 H52 L46 76 L62 52 H50 Z" fill="#ffd23f" stroke="#1b1740" stroke-width="3" stroke-linejoin="round"/>`),
-  nitro3: svg(`<g ${OUT}><rect x="8" y="34" width="26" height="50" rx="8" fill="#ff4d2e"/><rect x="37" y="24" width="26" height="60" rx="8" fill="#ff4d2e"/><rect x="66" y="34" width="26" height="50" rx="8" fill="#ff4d2e"/></g><g fill="#ffd23f" stroke="#1b1740" stroke-width="2.5" stroke-linejoin="round"><path d="M24 44 L16 58 H22 L18 72 L28 56 H22 Z"/><path d="M53 36 L44 52 H51 L46 70 L58 50 H51 Z"/><path d="M82 44 L74 58 H80 L76 72 L86 56 H80 Z"/></g>`),
-  sugar: svg(`<path d="M50 8 L61 36 L91 38 L67 56 L76 86 L50 69 L24 86 L33 56 L9 38 L39 36 Z" fill="url(#rb)" ${OUT}/><defs><linearGradient id="rb" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#ff5fa2"/><stop offset=".4" stop-color="#ffd23f"/><stop offset=".7" stop-color="#3ddc84"/><stop offset="1" stop-color="#3d9bff"/></linearGradient></defs><circle cx="42" cy="46" r="4" fill="#1b1740"/><circle cx="58" cy="46" r="4" fill="#1b1740"/>`),
-  rocket: svg(`<path d="M50 6 C70 22 72 52 64 74 H36 C28 52 30 22 50 6Z" fill="#f2f4f8" ${OUT}/><circle cx="50" cy="38" r="9" fill="#3d9bff" ${OUT}/><path d="M36 60 L20 78 L36 76 Z M64 60 L80 78 L64 76 Z" fill="#ff4d6d" ${OUT}/><path d="M40 76 Q50 98 60 76" fill="#ffb02e" ${OUT}/>`),
+  ball: svg(ballAt(50, 52, 36)),
+  ball3: svg(`${ballAt(29, 64, 20)}${ballAt(71, 64, 20)}${ballAt(50, 30, 20)}`),
+  seeker: svg(`<ellipse cx="34" cy="28" rx="15" ry="11" transform="rotate(-20 34 28)" fill="#dff6ff" ${INK}/><ellipse cx="62" cy="24" rx="15" ry="11" transform="rotate(15 62 24)" fill="#dff6ff" ${INK}/><path d="M18 60 L6 64" ${INK}/><ellipse cx="50" cy="58" rx="32" ry="25" fill="#ffd23f" ${INK}/><path d="M38 36 Q34 58 38 81 M55 34 Q51 58 55 82" fill="none" stroke="#1b1740" stroke-width="9"/><circle cx="73" cy="53" r="5.5" fill="#1b1740"/>${GLOSS(70, 44, 6, 4, 20)}`),
+  oil: svg(`<path d="M50 12 C64 34 79 47 79 64 A29 29 0 0 1 21 64 C21 47 36 34 50 12Z" fill="#2b2840" ${INK}/><path d="M35 60 Q38 74 52 76" stroke="#9b6bff" stroke-width="7" fill="none" stroke-linecap="round"/>${GLOSS(40, 42, 6, 9, 25)}`),
+  bomb: svg(`<path d="M56 24 Q66 8 78 14" fill="none" ${INK}/><circle cx="46" cy="58" r="31" fill="#2b2840" ${INK}/><rect x="38" y="20" width="18" height="13" rx="3" fill="#b8bfcc" ${INK}/><path d="M82 6 l3 7 7 1 -6 4 2 7 -6 -4 -6 4 2 -7 -6 -4 7 -1z" fill="#ffd23f" stroke="#ff7a2e" stroke-width="2.5" stroke-linejoin="round"/>${GLOSS(34, 46, 9, 6)}`),
+  plane: svg(`<path d="M8 54 L92 16 L60 88 L48 62 Z" fill="#ffffff" ${INK}/><path d="M48 62 L92 16" ${INK} fill="none"/><path d="M48 62 L40 80 L60 88" fill="#ff4d6d" ${INK}/>`),
+  shield: svg(`<circle cx="50" cy="50" r="39" fill="#7fd8ff" fill-opacity=".6" ${INK}/><circle cx="50" cy="50" r="27" fill="none" stroke="#fff" stroke-width="3" opacity=".35"/><path d="M28 40 A24 24 0 0 1 50 22" stroke="#fff" stroke-width="8" fill="none" stroke-linecap="round"/><circle cx="68" cy="68" r="5" fill="#fff" opacity=".85"/>`),
+  nitro: svg(canAt(50, 56, 44, 62)),
+  nitro3: svg(`${canAt(22, 62, 26, 44)}${canAt(78, 62, 26, 44)}${canAt(50, 54, 28, 54)}`),
+  sugar: svg(`<path d="${star(42)}" fill="#ff5fa2" ${INK}/><path d="${star(30)}" fill="#ffd23f"/><path d="${star(19)}" fill="#3ddc84"/><path d="${star(9)}" fill="#3d9bff"/><circle cx="42" cy="50" r="4" fill="#1b1740"/><circle cx="58" cy="50" r="4" fill="#1b1740"/>`),
+  rocket: svg(`<path d="M36 60 L18 80 L37 77 Z M64 60 L82 80 L63 77 Z" fill="#ff4d6d" ${INK}/><path d="M40 77 Q50 100 60 77" fill="#ffb02e" ${INK}/><path d="M50 6 C71 22 73 52 64 77 H36 C27 52 29 22 50 6Z" fill="#f2f4f8" ${INK}/><circle cx="50" cy="40" r="9" fill="#3d9bff" ${INK}/>${GLOSS(40, 24, 5, 9, 20)}`),
 };
 
 export const ROULETTE_ORDER = ['ball', 'nitro', 'oil', 'seeker', 'shield', 'bomb', 'sugar', 'ball3', 'plane', 'nitro3', 'rocket'];
+
+/**
+ * The item roulette: every icon in a column, twice over, so sliding it up by half (a CSS animation, `.reel`)
+ * loops without a seam and costs nothing per frame.
+ */
+export const ROULETTE_REEL = `<span class="reel">${[...ROULETTE_ORDER, ...ROULETTE_ORDER].map((id) => `<i>${ITEM_ICONS[id]}</i>`).join('')}</span>`;
+
+/** The Giant's Hand, in the items' style: the hand itself and its three moves. */
+export const GIANT_ICONS = {
+  hand: svg(`<path d="M30 88 C18 74 12 60 14 52 C16 46 24 46 28 52 L34 62 V22 C34 15 44 15 44 22 V48 V14 C44 7 54 7 54 14 V48 V18 C54 11 64 11 64 18 V50 V28 C64 21 74 21 74 28 V62 C74 76 68 86 60 90 Z" fill="#ffd2b0" ${INK}/><path d="M44 48 V40 M54 48 V40 M64 50 V42" stroke="#e8a27a" stroke-width="4" stroke-linecap="round"/>`),
+  butter: svg(`<path d="M12 62 L50 44 L88 58 L88 70 L50 88 L12 74 Z" fill="#ffe27a" ${INK}/><path d="M12 62 L50 76 L88 58 M50 76 V88" fill="none" ${INK}/><path d="M24 62 L50 52" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".8"/><path d="M28 40 L72 22" stroke="#9aa0ab" stroke-width="8" stroke-linecap="round"/><path d="M28 40 L72 22" stroke="#e8ebf2" stroke-width="3" stroke-linecap="round"/>`),
+  bomb: svg(`<circle cx="50" cy="52" r="36" fill="#ff5fa2" ${INK}/><path d="M22 40 Q50 30 78 40 M18 58 Q50 48 82 58 M24 74 Q50 66 76 74" fill="none" stroke="#ffd23f" stroke-width="7"/>${GLOSS(36, 32, 9, 6)}`),
+  flick: svg(`<path d="M18 70 C14 60 20 50 30 50 H58 C66 50 66 40 58 40 H40 C30 40 30 28 40 28 H76 C86 28 90 38 88 50 L84 70 C82 80 74 86 64 86 H34 C26 86 20 80 18 70 Z" fill="#ffd2b0" ${INK}/><path d="M90 16 L98 10 M92 30 L100 28 M84 6 L86 0" stroke="#ffd23f" stroke-width="5" stroke-linecap="round"/>`),
+} as const;
 
 // ---------------------------------------------------------------- portraits
 

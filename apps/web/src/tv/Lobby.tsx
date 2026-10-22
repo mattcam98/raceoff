@@ -6,11 +6,13 @@ import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import { play } from '../audio/sound';
 import { api, type TvLink } from '../lib/net';
-import { portrait } from '../ui/art';
+import { Icon } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
+import { Face } from '../ui/Racer';
 import { RecordsBoard } from '../views/Records';
 import type { Director } from './director';
 import { SCHEME_HELP } from './keyboard';
+import { trackOutline, trackStart } from './trackArt';
 
 const onLoopback = () => ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
 
@@ -61,6 +63,7 @@ export function Lobby({ director, link, room }: { director: Director; link: TvLi
     <div className="lobby">
       <aside className="lobby__join">
         <Logo size="m" />
+        <h2 className="join-title">Grab your phone!</h2>
         <ol className="join-steps">
           <li>
             <span>1</span>Scan, or open on your phone
@@ -115,7 +118,14 @@ export function Lobby({ director, link, room }: { director: Director; link: TvLi
                   <div className="cards">
                     {CUPS.map((c) => (
                       <button key={c.id} className={`cup-card${s.cup === c.id ? ' is-on' : ''}`} onClick={() => set({ cup: c.id })}>
-                        <b>{c.name}</b>
+                        <b>
+                          <Icon name="trophy" /> {c.name}
+                        </b>
+                        <span className="cup-card__maps">
+                          {cupTracks(c.id).map((t) => (
+                            <TrackMap key={t.id} id={t.id} color={t.color} />
+                          ))}
+                        </span>
                         <span>{cupTracks(c.id).map((t) => t.name).join(' · ')}</span>
                       </button>
                     ))}
@@ -126,11 +136,15 @@ export function Lobby({ director, link, room }: { director: Director; link: TvLi
                   <div className="cards cards--tracks">
                     {TRACKS.map((t) => (
                       <button key={t.id} className={`track-card${s.track === t.id ? ' is-on' : ''}`} style={{ '--tc': t.color } as React.CSSProperties} onClick={() => set({ track: t.id })}>
+                        <TrackMap id={t.id} color={t.color} />
                         <b>{t.name}</b>
                         <span>{t.place}</span>
                       </button>
                     ))}
                     <button className={`track-card track-card--random${s.track === 'random' ? ' is-on' : ''}`} onClick={() => set({ track: 'random' })}>
+                      <span className="track-card__dice" aria-hidden>
+                        ?
+                      </span>
                       <b>Surprise me</b>
                       <span>Any track</span>
                     </button>
@@ -178,7 +192,7 @@ export function Lobby({ director, link, room }: { director: Director; link: TvLi
               void link.addLocal();
             }}
           >
-            + Keyboard player
+            <Icon name="keyboard" /> Keyboard player
           </button>
           <p className="lobby__hint">
             {room.players.length === 0
@@ -189,8 +203,8 @@ export function Lobby({ director, link, room }: { director: Director; link: TvLi
                   ? `${ready} of ${room.players.length} ready · ${room.players.find((p) => p.id === room.vip)?.name} can start from their phone`
                   : `${ready} of ${room.players.length} ready`}
           </p>
-          <button className="btn btn--go btn--big" disabled={!canStart} onClick={() => director.command('start')}>
-            {s.mode === 'gp' ? 'Start Grand Prix' : 'Start race'}
+          <button className="btn btn--go btn--big lobby__start" disabled={!canStart} onClick={() => director.command('start')}>
+            <Icon name="flag" /> {s.mode === 'gp' ? 'Start Grand Prix' : 'Start race'}
           </button>
         </footer>
       </section>
@@ -229,12 +243,20 @@ function Seat({ slot, player, vip, link, localIndex }: { slot: number; player: P
         {PLAYER_LABELS[slot]}
         {vip && <em>Host</em>}
       </span>
-      <div className="seat__face" dangerouslySetInnerHTML={{ __html: portrait(ch.id) }} />
+      <Face character={ch.id} className="seat__face" />
       <h3 className="seat__name">{player.name}</h3>
       <p className="seat__kart">
-        {player.local && <button onClick={() => cycle(-1, 'character')}>‹</button>}
+        {player.local && (
+          <button onClick={() => cycle(-1, 'character')} aria-label="Previous character">
+            <Icon name="left" />
+          </button>
+        )}
         {ch.name} · {body.name}
-        {player.local && <button onClick={() => cycle(1, 'character')}>›</button>}
+        {player.local && (
+          <button onClick={() => cycle(1, 'character')} aria-label="Next character">
+            <Icon name="right" />
+          </button>
+        )}
       </p>
       <dl className="stats">
         {(['speed', 'accel', 'handling', 'weight'] as const).map((k) => (
@@ -265,9 +287,12 @@ function Seat({ slot, player, vip, link, localIndex }: { slot: number; player: P
         </div>
       ) : (
         <>
-          <span className="seat__state">{!player.connected ? 'Phone asleep' : player.ready ? 'Ready!' : 'Choosing…'}</span>
+          <span className="seat__state">
+            {player.ready && player.connected && <Icon name="check" />}
+            {!player.connected ? 'Phone asleep' : player.ready ? 'Ready!' : 'Choosing…'}
+          </span>
           <button className="seat__kick" title={`Remove ${player.name}`} aria-label={`Remove ${player.name}`} onClick={() => link.kick(player.id)}>
-            ✕
+            <Icon name="close" />
           </button>
         </>
       )}
@@ -310,5 +335,18 @@ function Stepper({ value, min, max, onChange, suffix = '' }: { value: number; mi
         +
       </button>
     </div>
+  );
+}
+
+/** A track's outline, small, with its start marked. */
+function TrackMap({ id, color }: { id: string; color: string }) {
+  const start = trackStart(id);
+  const d = trackOutline(id);
+  return (
+    <svg className="track-map" viewBox="0 0 100 64" aria-hidden style={{ '--tc': color } as React.CSSProperties}>
+      <path className="track-map__rim" d={d} />
+      <path className="track-map__road" d={d} />
+      {start && <circle className="track-map__start" cx={start[0]} cy={start[1]} r="3.6" />}
+    </svg>
   );
 }

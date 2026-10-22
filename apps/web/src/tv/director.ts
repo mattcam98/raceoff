@@ -722,14 +722,14 @@ export class Director {
         if (e.kind === 'flick') {
           play('pad', this.panOf(e.k));
           this.flickedUntil[e.k] = race.time + 1.4;
-          this.hud.feed(`👉 <b>${escapeHtml(giant)}</b> flicked ${who} forward`, e.slot);
+          this.hud.feed(`<b>${escapeHtml(giant)}</b> flicked ${who} forward`, e.slot, 'flick');
           if (human(e.k)) {
             this.hud.banner(e.k, `FLICKED BY ${giant.toUpperCase()}!`, 'good', 1300);
             this.haptic(e.k, 'boost');
           }
         } else {
           play(e.kind === 'bomb' ? 'bombThrow' : 'whoosh', this.panOf(e.k), 0.9);
-          this.hud.feed(e.kind === 'bomb' ? `🍬 <b>${escapeHtml(giant)}</b> dropped a gobstopper on ${who}` : `🧈 <b>${escapeHtml(giant)}</b> buttered the road for ${who}`, e.slot);
+          this.hud.feed(e.kind === 'bomb' ? `<b>${escapeHtml(giant)}</b> dropped a gobstopper on ${who}` : `<b>${escapeHtml(giant)}</b> buttered the road for ${who}`, e.slot, e.kind);
           if (human(e.k)) {
             this.hud.banner(e.k, e.kind === 'bomb' ? 'GIANT! DODGE THE RING!' : 'GIANT! BUTTER AHEAD!', 'warn', 1400);
             this.haptic(e.k, 'bump');

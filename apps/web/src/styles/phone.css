@@ -235,11 +235,11 @@
   font-family: var(--font-display);
   font-weight: 900;
   font-style: italic;
-  font-stretch: 125%;
   font-size: 5rem;
   line-height: 1;
   color: #fff;
-  -webkit-text-stroke: 2px #1b1740;
+  -webkit-text-stroke: 0.12em #1b1740;
+  paint-order: stroke fill;
   text-shadow: 0 5px 0 #1b1740;
   animation: pop-in 500ms var(--spring);
 }
@@ -258,6 +258,9 @@
   font-weight: 700;
 }
 .after-record {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 4px 0 0;
   background: rgb(255 201 60 / 0.2);
   border-radius: 999px;
@@ -284,14 +287,12 @@
 .after-list li.is-me {
   background: rgb(255 201 60 / 0.15);
 }
-.after-list i {
+.after-list .face {
   width: 30px;
   height: 30px;
-  display: block;
 }
-.after-list span {
-  font-family: var(--font-display);
-  font-weight: 900;
+.after-list .medal {
+  font-size: 0.9rem;
 }
 .after-list em {
   font-style: normal;
@@ -365,6 +366,11 @@
   font-style: italic;
   line-height: 1;
 }
+.pad__place b,
+.pad__place sup {
+  -webkit-text-stroke: 0.14em var(--ink-950);
+  paint-order: stroke fill;
+}
 .pad__place b {
   font-size: 2rem;
 }
@@ -395,12 +401,27 @@
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-display);
   font-weight: 900;
+  font-style: italic;
   font-size: 1.4rem;
-  padding: 4px 16px;
+  padding: 4px 18px 4px 10px;
   border-radius: 999px;
   pointer-events: none;
+  box-shadow: 0 4px 0 rgb(0 0 0 / 0.35);
+}
+.pad__banner-art {
+  width: 1.6em;
+  height: 1.6em;
+  margin: -0.2em 0;
+}
+.pad__banner-art svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 .pad__banner--warn {
   background: var(--sun);
@@ -423,7 +444,8 @@
   font-style: italic;
   font-size: 5rem;
   color: var(--sun);
-  -webkit-text-stroke: 2px #1b1740;
+  -webkit-text-stroke: 0.12em #1b1740;
+  paint-order: stroke fill;
   text-shadow: 0 6px 0 #1b1740;
   animation: pop-in 500ms var(--spring);
 }
@@ -502,7 +524,9 @@
   height: var(--knob);
   margin-left: calc(var(--knob) / -2);
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--pc) 70%, #fff), var(--pc) 60%);
+  background:
+    radial-gradient(circle at 38% 28%, rgb(255 255 255 / 0.75) 0 12%, transparent 13%),
+    radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--pc) 70%, #fff), var(--pc) 60%, color-mix(in srgb, var(--pc) 70%, #000));
   box-shadow: 0 5px 0 rgb(0 0 0 / 0.35), 0 0 0 3px rgb(255 255 255 / 0.25);
   will-change: transform;
 }
@@ -547,7 +571,7 @@
   display: grid;
   place-items: center;
   border-radius: 26px;
-  background: rgb(255 255 255 / 0.08);
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.05));
   font-size: 2.6rem;
   color: var(--pc);
   box-shadow: 0 6px 0 rgb(0 0 0 / 0.35), inset 0 0 0 2px var(--line);
@@ -588,6 +612,17 @@
   transform: translateY(5px);
   filter: brightness(1.12);
 }
+.pad-btn::before {
+  content: '';
+  position: absolute;
+  inset: 5% 9% 48%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.32), rgb(255 255 255 / 0));
+  pointer-events: none;
+}
+.pad-btn > * {
+  position: relative;
+}
 .pad-btn small {
   font-size: 0.68rem;
   font-weight: 800;
@@ -600,9 +635,11 @@
   width: var(--drift);
   height: var(--drift);
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 30%, #ff7a5c, var(--race) 62%);
+  background: radial-gradient(circle at 50% 30%, #ff8a66, var(--race) 58%, var(--race-deep));
   box-shadow: 0 7px 0 var(--race-deep), 0 14px 26px -10px rgb(0 0 0 / 0.7);
   font-size: 1.55rem;
+  font-style: italic;
+  text-shadow: 0 2px 0 rgb(0 0 0 / 0.25);
 }
 .pad-btn--drift.is-down {
   box-shadow: 0 2px 0 var(--race-deep);
@@ -627,15 +664,27 @@
   width: var(--item);
   height: var(--item);
   border-radius: 50%;
-  background: var(--ink-700);
+  background: radial-gradient(circle at 50% 30%, #3b4392, var(--ink-700) 55%, var(--ink-800));
   box-shadow: 0 6px 0 var(--ink-950), inset 0 0 0 3px rgb(255 255 255 / 0.15);
 }
-.pad-btn--item i {
+.pad-btn--item > i {
   width: 66%;
   height: 66%;
   display: block;
+  filter: drop-shadow(0 3px 0 rgb(0 0 0 / 0.3));
 }
-.pad-btn--item i:empty {
+.pad-btn--item > i svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* The roulette reel scrolls inside a window that fades at the top and bottom. */
+.pad-btn--item.is-rolling > i {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(transparent, #000 28%, #000 72%, transparent);
+  mask-image: linear-gradient(transparent, #000 28%, #000 72%, transparent);
+}
+.pad-btn--item > i:empty {
   display: none;
 }
 .pad-btn--item span {
@@ -674,7 +723,7 @@
 }
 .pad-btn--brake {
   right: calc(var(--edge) + var(--drift) + var(--gap) * 1.5);
-  background: var(--ink-600);
+  background: linear-gradient(180deg, #424a96, var(--ink-600));
   box-shadow: 0 5px 0 var(--ink-800);
 }
 .pad-btn--brake small {
@@ -807,6 +856,9 @@
 .sheet__card h2 {
   margin: 0;
   font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 900;
+  font-size: 1.8rem;
 }
 .sheet__card .seg {
   display: flex;
@@ -881,9 +933,20 @@
   color: var(--text-dim);
   font-size: 0.92rem;
 }
+.giant__art {
+  display: block;
+  width: 2.2rem;
+  height: 2.2rem;
+}
+.giant__art svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .giant__hand {
-  font-size: 2.6rem;
-  line-height: 1;
+  width: 3rem;
+  height: 3rem;
+  flex: none;
   animation: giant-wave 1.8s ease-in-out infinite;
   transform-origin: 70% 90%;
 }
@@ -919,9 +982,9 @@
   cursor: pointer;
   transition: transform 60ms, box-shadow 60ms;
 }
-.giant__move span {
-  font-size: 1.9rem;
-  line-height: 1.1;
+.giant__move .giant__art {
+  width: 2.4rem;
+  height: 2.4rem;
 }
 .giant__move b {
   font-family: var(--font-display);
@@ -945,6 +1008,9 @@
   color: var(--text-dim);
   font-weight: 600;
   font-size: 0.92rem;
+}
+.giant__end .icon {
+  vertical-align: -0.25em;
 }
 .giant__end {
   display: flex;
@@ -997,10 +1063,10 @@
 .giant__target .giant__player {
   color: var(--tc);
 }
-.giant__target em {
-  font-style: normal;
-  font-size: 1.3rem;
-  text-align: center;
+.giant__target .giant__go {
+  width: 1.8rem;
+  height: 1.8rem;
+  justify-self: center;
 }
 .giant__place {
   font-family: var(--font-display);
@@ -1010,7 +1076,7 @@
 .giant__target.is-safe {
   opacity: 0.45;
 }
-.giant__target.is-wait em {
+.giant__target.is-wait .giant__go {
   opacity: 0.35;
 }
 .giant__empty {
@@ -1051,4 +1117,15 @@
   60% {
     transform: rotate(8deg);
   }
+}
+
+/* Icon buttons (pause, controls, leave) hold a drawn glyph. */
+.icon-btn .icon {
+  width: 22px;
+  height: 22px;
+}
+.arrows .icon {
+  width: 1em;
+  height: 1em;
+  filter: drop-shadow(0 3px 0 rgb(0 0 0 / 0.3));
 }
