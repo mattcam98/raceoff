@@ -47,17 +47,23 @@ export interface KartParams {
   mass: number;
   /** Fraction of top speed kept off-road. */
   rough: number;
+  /** How fast drift sparks charge, 1 for an average kart. */
+  charge: number;
 }
 
 export function kartParams(character: string, body: string, ccScale: number): KartParams {
   const st = combinedStats(character, body);
   return {
-    maxSpeed: (26.5 + st.speed * 1.5) * ccScale,
+    // Top speed spreads only a little with the stat: at 1.5 a point it was the one stat that counted, the fastest
+    // kart lapping 13% quicker than the nimblest whatever the handling, accel or driving. Now about 4%.
+    maxSpeed: (31 + (st.speed - 3) * 0.6) * ccScale,
     accel: 0.95 + st.accel * 0.22,
     turn: 1.75 + st.handling * 0.13,
     grip: 9 + st.handling * 0.9,
     mass: 0.8 + st.weight * 0.22,
     rough: 0.48 + st.weight * 0.025,
+    // Nimble karts charge their sparks quicker, so handling pays wherever there is a drift to be had.
+    charge: 1 + (st.handling - 3) * 0.06,
   };
 }
 
@@ -74,11 +80,23 @@ const DRIFT_CHARGE_LEAN = 0.3;
 /** Boost seconds for blue, orange and purple sparks: purple is long, so holding out for it is a real gamble. */
 const DRIFT_BOOST = [0.5, 1.1, 1.9];
 /**
- * How hard a drift turns, as a share of full steering lock: steering out of it opens the arc to the first,
- * steering into it tightens it to the second, and hands off holds it about level with full lock. As in
- * Mario Kart, a drift turns tighter than the tyres can grip, which is what it is for.
+ * How hard a drift turns, as a share of full steering lock: steering fully out of it, hands off, and fully into
+ * it. At 100cc top speed that is an arc of about 85 m, 43 m and 12 m across, which covers the bends the tracks
+ * have (most are 35 to 120 m); hands off used to sit level with full lock (17 m), so most bends could not be
+ * drifted at all without diving into the inside wall. As in Mario Kart, steering in still turns tighter than the
+ * tyres can grip.
  */
-export const DRIFT_TURN = { wide: 0.55, tight: 1.4 };
+export const DRIFT_TURN = { wide: 0.2, hands: 0.4, tight: 1.4 };
+/**
+ * The drift's arc for `inward` (0 steering out, 0.5 hands off, 1 steering in). Leaning in tightens gently at
+ * first, so the light lean that charges sparks at full rate still holds a medium bend; only a hard lean gives a
+ * hairpin.
+ */
+export function driftArc(inward: number) {
+  if (inward <= 0.5) return lerp(DRIFT_TURN.wide, DRIFT_TURN.hands, inward * 2);
+  const u = (inward - 0.5) * 2;
+  return lerp(DRIFT_TURN.hands, DRIFT_TURN.tight, u * u);
+}
 /** The turn rate drifts are built on. Handling mostly changes ordinary steering; every kart drifts much alike. */
 const DRIFT_BASE_TURN = 2.14;
 const DRIFT_BASE_SHARE = 0.6;
@@ -97,8 +115,11 @@ export const turnFalloff = (speedShare: number, drifting: boolean) =>
 export const BOOST_KICK = 0.45;
 /** Automatic drift: how long a hard turn must be held, how hard, and the speed it needs (share of top). */
 const AUTO_DRIFT = { hold: 0.2, steer: 0.7, speed: 0.5, keep: 0.2 };
-/** How quickly the drift's arc follows the steering, per second: changes of line are smooth, never a jerk. */
-const DRIFT_TURN_EASE = 2.6;
+/**
+ * How quickly the drift's arc follows the steering, per second: changes of line are smooth, never a jerk, but
+ * quick enough (wide to tight in a quarter of a second) that correcting a drift answers the thumb.
+ */
+const DRIFT_TURN_EASE = 5;
 /** Sideways grip in a drift, and how much of the speed it lets slide outward. */
 const DRIFT_GRIP = 13;
 const DRIFT_SLIDE = 0.07;
@@ -152,6 +173,8 @@ export class Kart {
   hopping = false;
   /** A drift was asked for in this hop but no direction yet. */
   driftWanted = false;
+  /** DRIFT was pressed when no hop could start (in the air, too slow): it hops as soon as it can, while held. */
+  driftArmed = false;
   /** The drift was started by the automatic-drift assist: it ends when the turn eases, and stops at orange. */
   autoDrifting = false;
   /** Seconds a hard turn has been held, toward an automatic drift. */
@@ -361,8 +384,13 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
   // ---- drift
   const driftPressed = inp.drift && !k.lastDrift;
   k.lastDrift = inp.drift;
+  // A press that cannot hop yet (in the air off a crest or a jump, still slow after a knock) is kept while the
+  // button is held, so it hops on landing or once up to speed instead of silently doing nothing.
+  if (driftPressed && !k.driftDir) k.driftArmed = true;
+  if (!inp.drift) k.driftArmed = false;
   const fwdSpeed = k.speed;
-  if (controlled && k.grounded && driftPressed && fwdSpeed > 9 && !k.driftDir && k.rocket === 0) {
+  if (controlled && k.grounded && k.driftArmed && fwdSpeed > 9 && !k.driftDir && k.rocket === 0) {
+    k.driftArmed = false;
     // A little hop; the direction is chosen by the steering during it.
     k.vy = 5.5;
     k.grounded = false;
@@ -414,14 +442,14 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
   const inward = k.driftDir ? clamp((k.steer * k.driftDir + 1) / 2, 0, 1) : 0;
   if (k.driftDir) {
     // Always turning into the drift; the steering trims the arc between wide and tight.
-    k.driftTurn = approach(k.driftTurn, lerp(DRIFT_TURN.wide, DRIFT_TURN.tight, inward), dt * DRIFT_TURN_EASE);
+    k.driftTurn = approach(k.driftTurn, driftArc(inward), dt * DRIFT_TURN_EASE);
     turnInput = k.driftDir * k.driftTurn;
     if (k.grounded) {
       const lean = k.steer * k.driftDir;
       const rate = lean >= DRIFT_CHARGE_LEAN ? DRIFT_CHARGE.into : lean <= -DRIFT_CHARGE_LEAN ? DRIFT_CHARGE.out : DRIFT_CHARGE.hands;
       // The assists stop at orange: purple sparks are for drifting by hand, as in Mario Kart.
       const cap = k.autoDrifting || inp.smart ? DRIFT_LEVELS[2] - 0.01 : Infinity;
-      if (k.driftCharge < cap) k.driftCharge = Math.min(cap, k.driftCharge + dt * rate);
+      if (k.driftCharge < cap) k.driftCharge = Math.min(cap, k.driftCharge + dt * rate * p.charge);
     }
   }
   // The body swings into the corner as the drift builds (more when tightening) and back out after it. A drift
@@ -709,11 +737,14 @@ function bounce(k: Kart, nx: number, nz: number, ev: StepEvents) {
   // How square-on the hit was: 0 for a graze along the wall, 1 for straight into it.
   const headOn = clamp(strength / Math.max(1e-6, k.planarSpeed), 0, 1);
   // Bounce off the normal, and scrub speed along the wall in proportion to how square-on it was, so a graze
-  // costs almost nothing and a head-on hit stops the kart.
+  // costs almost nothing and a head-on hit stops the kart. Nothing is taken for merely touching: a kart leaning
+  // on a wall touches it every step, and a fixed toll per touch made sliding along one sticky.
   const e = 0.35;
   k.vx -= (1 + e) * vn * nx;
   k.vz -= (1 + e) * vn * nz;
-  const keep = 0.99 - 0.24 * headOn * headOn;
+  // Grinding along it with the steering pushed into it does cost, about a fifth of the speed at full lock.
+  const into = clamp(-k.steer * (nx * rightX(k.h) + nz * rightZ(k.h)), 0, 1);
+  const keep = 1 - 0.12 * headOn - 0.13 * headOn * headOn - 0.006 * into;
   k.vx *= keep;
   k.vz *= keep;
   // A glancing hit turns the nose along the wall instead of sticking to it.

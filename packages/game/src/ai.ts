@@ -62,6 +62,8 @@ export class AiDriver {
   private driftHold = 0;
   /** How long a drift has been turning the kart further than it wants to go. */
   private overT = 0;
+  /** Seconds spent waiting for a moving hazard, counting down again after; above 2 it stops waiting a while. */
+  private waitT = 0;
   /** Heading for a shortcut's entrance: no drifting, the lane is set by the entrance. */
   private liningUp = false;
   private sightT = 0;
@@ -237,6 +239,19 @@ export class AiDriver {
       gas = false;
       if (speed > 14) brake = true;
     }
+    // A roller or a train crossing ahead: beat it if flooring it gets through, otherwise stop short and let it
+    // pass, never creeping into its path. Having waited a while (a roller that sweeps right up to where it
+    // stopped never looks clear), it commits.
+    let waiting = false;
+    this.waitT = Math.max(-1.5, this.waitT - dt);
+    if (race.hazards.length && this.waitT < 2 && this.rand() < this.skill.awareness + 0.2) {
+      const plan = this.movingHazard(speed);
+      if (plan === 'go') ((gas = true), (brake = false));
+      else if (plan === 'hold') ((gas = false), (waiting = true));
+      else if (plan === 'wait') ((gas = false), (brake = true), (waiting = true));
+      if (waiting) this.waitT += dt * 2;
+      if (this.waitT >= 2) this.waitT = 3.5;
+    }
 
     // Drift long, tight bends.
     let drift = false;
@@ -274,7 +289,7 @@ export class AiDriver {
       this.reverseT -= dt;
       return { steer: this.reverseSteer, gas: false, brake: true, drift: false, back: false, item: false };
     }
-    if (race.racing && speed < 2.5 && !k.stun) this.stuckT += dt;
+    if (race.racing && speed < 2.5 && !k.stun && !waiting) this.stuckT += dt;
     else this.stuckT = 0;
     if (this.stuckT > 1.0) {
       this.stuckT = 0;
@@ -285,7 +300,7 @@ export class AiDriver {
     }
 
     const { item, back } = this.thinkItem(dt);
-    return { steer, gas: gas || speed < 8, brake, drift, back, item };
+    return { steer, gas: gas || (speed < 8 && !waiting), brake: brake && (speed > 0.5 || !waiting), drift, back, item };
   }
 
   /** Will a moving hazard be in our way when we reach it? */
@@ -309,6 +324,38 @@ export class AiDriver {
       }
     }
     return false;
+  }
+
+  /**
+   * Rollers, trains and tops: will one be where the kart is within the next 0.9 s? 'clear' if neither
+   * holding this speed nor flooring it meets one, 'go' if only flooring it gets through first, 'hold' if only
+   * holding this speed does, 'wait' if only stopping short does.
+   */
+  private movingHazard(speed: number): 'clear' | 'go' | 'hold' | 'wait' {
+    const race = this.race;
+    const k = this.kart;
+    const fx = fwdX(k.h);
+    const fz = fwdZ(k.h);
+    const top = k.params.maxSpeed * k.speedMul;
+    const meets = (floor: boolean) => {
+      for (const h of race.hazards) {
+        if (h.def.kind === 'stomper') continue;
+        let v = speed;
+        let d = 0;
+        for (let t = 0.15; t <= 0.91; t += 0.15) {
+          // Flooring it, speed builds the way the engine builds it.
+          if (floor && v < top) v = Math.min(top, v + Math.max((top - v) * k.params.accel, 9) * 0.15);
+          d += v * 0.15;
+          const x = k.x + fx * d;
+          const z = k.z + fz * d;
+          for (const b of hazardAt(h.def, race.time + t).bodies) if (Math.hypot(b.x - x, b.z - z) < b.r + KART_RADIUS + 0.4) return true;
+        }
+      }
+      return false;
+    };
+    const now = meets(false);
+    const floored = meets(true);
+    return !floored ? (now ? 'go' : 'clear') : now ? 'wait' : 'hold';
   }
 
   /** How many metres the bend ahead keeps turning the same way. */
