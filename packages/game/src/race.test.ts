@@ -19,8 +19,9 @@ describe('tracks', () => {
       const track = getTrack(t.id);
 
       it('has a lap of a sensible length', () => {
-        expect(track.length).toBeGreaterThan(600);
-        expect(track.length).toBeLessThan(1300);
+        // Three laps should take a good computer roughly 1:45 to 2:30 at 100cc.
+        expect(track.length).toBeGreaterThan(950);
+        expect(track.length).toBeLessThan(1350);
       });
 
       it('puts every grid slot and item box on the road', () => {
@@ -79,7 +80,7 @@ describe('computer races', () => {
         expect(outside / 60, `${t.id} seconds behind walls`).toBeLessThan(3);
         const winner = Math.min(...race.karts.map((k) => k.finishTime!));
         const last = Math.max(...race.karts.map((k) => k.finishTime!));
-        expect(winner).toBeLessThan(130);
+        expect(winner).toBeLessThan(160);
         expect(last - winner, `${t.id} spread`).toBeLessThan(60);
       }
     });
