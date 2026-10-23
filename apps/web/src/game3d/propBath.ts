@@ -193,7 +193,7 @@ function foam(g: THREE.Group, x: number, y: number, z: number, size: number, n: 
     const a = r() * Math.PI * 2;
     const d = r() * size;
     const s = size * (0.35 + r() * 0.4) * (1 - (d / size) * 0.5);
-    const b = mesh(new THREE.SphereGeometry(s, 10, 6), m);
+    const b = mesh(new THREE.SphereGeometry(s, 8, 5), m);
     b.scale.y = 0.75;
     b.position.set(x + Math.cos(a) * d, y + s * 0.25 + r() * s * 0.3, z + Math.sin(a) * d);
     g.add(b);
@@ -202,7 +202,7 @@ function foam(g: THREE.Group, x: number, y: number, z: number, size: number, n: 
 
 /** A few clear soap bubbles in one mesh, so they cost one draw call. */
 function bubbles(spots: [number, number, number, number][]) {
-  const geos = spots.map(([x, y, z, r]) => new THREE.SphereGeometry(r, 12, 8).translate(x, y, z));
+  const geos = spots.map(([x, y, z, r]) => new THREE.SphereGeometry(r, 10, 6).translate(x, y, z));
   const o = mesh(mergeGeometries(geos), glass('#f4fbff', 0.06, 0.02), false);
   o.renderOrder = 3;
   return o;
@@ -245,21 +245,17 @@ function drapedTowel(width: number, zc: number, yc: number, rail: number, front:
 // ---------------------------------------------------------------- the tub on the bath track
 
 /**
- * The bath track's basin, a squared-off oval (a superellipse) so the water's corners fit inside: the inner
- * wall at the floor is |x/105|^6 + |(z+1)/54|^6 = 1, which holds every water shape of the bath track.
- * `profile` is [outward offset, height] from the inner foot, up over the rim and down the outside.
+ * The bath track's sunken tub rim: a ring round the main water ellipse (rx 101, rz 47 from the prop). The
+ * bath is let into the floor, so nothing stands taller than the lip where the road runs past it.
+ * `profile` is [outward offset, height] from the water's edge, over the lip and back down to the floor.
  */
-function basin(profile: [number, number][], m: THREE.Material, segs = 192) {
-  const n = 6;
-  const pts = spline(profile, 36);
+function rim(profile: [number, number][], m: THREE.Material, segs = 128) {
+  const pts = spline(profile, 10);
   const pos: number[] = [];
   const idx: number[] = [];
-  const pw = (c: number) => Math.sign(c) * Math.pow(Math.abs(c), 2 / n);
   for (let i = 0; i < segs; i++) {
     const t = (i / segs) * Math.PI * 2;
-    const cx = pw(Math.cos(t));
-    const cz = pw(Math.sin(t));
-    for (const [off, y] of pts) pos.push(cx * (105 + off), y, -1 + cz * (54 + off));
+    for (const [off, y] of pts) pos.push(Math.cos(t) * (101 + off), y, Math.sin(t) * (47 + off));
   }
   const k = pts.length;
   for (let i = 0; i < segs; i++)
@@ -433,24 +429,26 @@ export const bath: Record<string, Builder> = {
   bathmat: () => rbox(60, 1.4, 36, 1.2, printed(matStripes(), { rough: 1, normalMap: fluff(), normalScale: 0.8 }), { py: [0, 0, 1, 1], rest: [0.01, 0.01, 0.03, 0.99] }, 3),
 
   /**
-   * The bath track's tub, 226 x 118 overall: an enamel basin whose rim lip tops out at y 6.2, inner walls
-   * dropping to the water (drawn by the track at y 0.12), chrome taps and a plug on its chain at the +x end,
-   * foam on the water. Decoration only: the road runs along the rim on the far side.
+   * The bath track's tub, sunk into the floor: a white enamel lip 0.4 high and 3.4 wide round the water (drawn
+   * by the track at y 0.12), chrome taps and a plug on its chain on the lip at the +x end, foam on the water.
+   * Decoration only: the road runs right along the front at floor level and up on the rim road at the back,
+   * so nothing here may stand where a kart or its chase camera goes.
    */
   tub: () => {
     const g = new THREE.Group();
-    g.add(basin([[0, -0.3], [0.5, 1.5], [1.4, 4], [2.4, 5.6], [3.6, 6.15], [5, 6.2], [6.3, 5.8], [7, 4.8], [7.3, 2.5], [7.6, 0.2], [7.8, -0.3]], glaze('#fbfcfd')));
-    // Mixer taps on the rim at the +x end: two cross-heads either side of a spout leaning over the water.
+    g.add(rim([[-0.4, -0.3], [0, 0.15], [0.5, 0.34], [1.5, 0.42], [2.5, 0.34], [3, 0.15], [3.4, -0.3]], glaze('#fbfcfd')));
+    // Mixer taps on the lip at the +x end, clear of the road up the end of the tub (x 125 in the world).
     const c = chrome();
-    const tx = 109.5;
-    g.add(at(rbox(4, 0.7, 18, 0.35, c), tx, 6, -1));
-    g.add(at(crossTap('#e63946', 6.5), tx, 6.5, -7.5));
-    g.add(at(crossTap('#3d9bff', 6.5), tx, 6.5, 5.5));
-    g.add(at(turn([[1.3, 0], [1.3, 0.4], [0.95, 0.8], [0.9, 6.2], [0.6, 7], [0, 7]], c, 20), tx, 6.5, -1));
-    g.add(sweep([v3(tx, 13.1, -1), v3(tx - 1.2, 15.1, -1), v3(tx - 3.7, 14.8, -1), v3(tx - 4.9, 13.1, -1)], (t) => 0.75 - t * 0.12, c, 24, 12));
-    // The plug, out on the rim, and its chain running back to the taps.
-    g.add(at(turn([[1.6, 0], [1.6, 0.35], [1.25, 0.6], [0, 0.65]], c, 16), tx - 0.5, 6.2, 12));
-    const chain = new THREE.CatmullRomCurve3([v3(tx, 6.9, 7), v3(tx - 0.8, 6.6, 9), v3(tx - 1, 6.5, 10.5), v3(tx - 0.5, 6.9, 12)]);
+    const tx = 102.5;
+    const y = 0.4;
+    g.add(at(rbox(3, 0.35, 14, 0.3, c), tx, y - 0.1, -0.5));
+    g.add(at(crossTap('#e63946', 6.5), tx, y, -5.5));
+    g.add(at(crossTap('#3d9bff', 6.5), tx, y, 4.5));
+    g.add(at(turn([[1.3, 0], [1.3, 0.4], [0.95, 0.8], [0.9, 6.2], [0.6, 7], [0, 7]], c, 20), tx, y, -0.5));
+    g.add(sweep([v3(tx, y + 6.6, -0.5), v3(tx - 1.2, y + 8.6, -0.5), v3(tx - 3.7, y + 8.3, -0.5), v3(tx - 4.9, y + 6.6, -0.5)], (t) => 0.75 - t * 0.12, c, 24, 12));
+    // The plug, out on the lip, and its chain running back to the taps.
+    g.add(at(turn([[1.6, 0], [1.6, 0.35], [1.25, 0.6], [0, 0.65]], c, 16), 100.6, y, 10));
+    const chain = new THREE.CatmullRomCurve3([v3(tx, y + 0.5, 6), v3(tx - 0.6, y + 0.2, 7.5), v3(tx - 1.4, y + 0.1, 8.8), v3(100.8, y + 0.6, 10)]);
     for (let i = 0; i < 9; i++) {
       const p = chain.getPointAt(i / 8);
       g.add(at(mesh(new THREE.TorusGeometry(0.28, 0.08, 6, 10), c), p.x, p.y, p.z, 0, (i % 2) * (Math.PI / 2), Math.PI / 2));

@@ -92,7 +92,7 @@ const blockAtlas = () =>
   });
 const blockBumps = () =>
   bumps('toyblocksN', AW / 2, AH / 2, (g) => {
-    g.filter = 'blur(2px)';
+    g.save();
     g.scale(0.5, 0.5);
     g.fillStyle = '#d0d0d0';
     g.strokeStyle = '#d0d0d0';
@@ -105,6 +105,11 @@ const blockBumps = () =>
       g.stroke();
       blockGlyph(g, k, x, y);
     }
+    g.restore();
+    // Soften it in one pass: a blur filter on every stroke and glyph costs a full-canvas blur each.
+    g.filter = 'blur(2px)';
+    g.drawImage(g.canvas, 0, 0);
+    g.filter = 'none';
   }, 3, false);
 
 /** Neutral fur, tinted per material: soft streaks as colour, short tufts as a normal map. */

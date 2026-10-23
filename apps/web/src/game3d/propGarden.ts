@@ -287,9 +287,9 @@ function bladeShape(len: number, w: number, pointy = 0.9) {
   return s;
 }
 
-/** A soft, cupped leaf or petal lying in x/y, pointing +y, facing +z. */
-function blade(len: number, w: number, m: THREE.Material, cup = 0.15, curl = 0.02) {
-  const e = extrude(bladeShape(len, w), Math.max(0.08, w * 0.05), 0, m, { curve: 6 });
+/** A soft, cupped leaf or petal lying in x/y, pointing +y, facing +z. `curve`: segments per edge. */
+function blade(len: number, w: number, m: THREE.Material, cup = 0.15, curl = 0.02, curve = 6) {
+  const e = extrude(bladeShape(len, w), Math.max(0.08, w * 0.05), 0, m, { curve });
   e.geometry = soften(e.geometry, (x, y) => cup * x * x - curl * y * y);
   return e;
 }
@@ -303,16 +303,16 @@ function radiate(o: THREE.Object3D, yaw: number, rise: number) {
   return p;
 }
 
-/** A flower head facing +y: a ring of petals round a seeded centre. */
-function bloom(color: string, petals = 10, len = 3.6, w = 1.5, rise = 0.35, centre = 1.4) {
+/** A flower head facing +y: a ring of petals round a seeded centre. `curve` 3 is for flowers seen from afar. */
+function bloom(color: string, petals = 10, len = 3.6, w = 1.5, rise = 0.35, centre = 1.4, curve = 6) {
   const g = new THREE.Group();
   const pm = satin(color);
-  for (let i = 0; i < petals; i++) g.add(radiate(blade(len, w, pm, 0.18, 0.015), (i / petals) * Math.PI * 2 + (i % 2) * 0.1, rise + (i % 2) * 0.12));
-  const c = new THREE.SphereGeometry(centre, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  for (let i = 0; i < petals; i++) g.add(radiate(blade(len, w, pm, 0.18, 0.015, curve), (i / petals) * Math.PI * 2 + (i % 2) * 0.1, rise + (i % 2) * 0.12));
+  const c = new THREE.SphereGeometry(centre, curve * 2 + 4, curve + 2, 0, Math.PI * 2, 0, Math.PI / 2);
   c.scale(1, 0.55, 1);
   g.add(mesh(c, printed(seedTex(), { rough: 0.8 })));
   // A green calyx underneath.
-  g.add(at(turn([[0, -1.2], [0.5, -1.0], [centre * 0.8, -0.1], [0, 0]], satin('#4f8a2e'), 12), 0, 0, 0));
+  g.add(at(turn([[0, -1.2], [0.5, -1.0], [centre * 0.8, -0.1], [0, 0]], satin('#4f8a2e'), curve * 2), 0, 0, 0));
   return g;
 }
 
@@ -320,18 +320,19 @@ const STEM = '#4f8a2e';
 
 const scaledBy = <T extends THREE.Object3D>(o: T, k: number) => (o.scale.setScalar(k), o);
 
-/** A stem from the ground up to `top`, gently curved, with a bloom on it and leaves along it. */
-function flowerOn(top: THREE.Vector3, color: string, scale = 1, seed = 1) {
+/** A stem from the ground up to `top`, gently curved, with a bloom on it and leaves along it. `far`: half the detail. */
+function flowerOn(top: THREE.Vector3, color: string, scale = 1, seed = 1, far = false) {
+  const curve = far ? 3 : 6;
   const r = rand(seed);
   const g = new THREE.Group();
   const mid = v3(top.x * 0.4 + (r() - 0.5) * 1.5, top.y * 0.55, top.z * 0.4 + (r() - 0.5) * 1.5);
-  g.add(sweep([v3(0, 0, 0), mid, top], 0.32 * scale, satin(STEM), 16, 6, false));
-  const head = bloom(color, 9 + Math.floor(r() * 4), 3.4 * scale, 1.4 * scale, 0.3 + r() * 0.2, 1.2 * scale);
+  g.add(sweep([v3(0, 0, 0), mid, top], 0.32 * scale, satin(STEM), far ? 6 : 16, far ? 5 : 6, false));
+  const head = bloom(color, 9 + Math.floor(r() * 4), 3.4 * scale, 1.4 * scale, 0.3 + r() * 0.2, 1.2 * scale, curve);
   head.position.copy(top);
   head.rotation.set((r() - 0.5) * 0.6, r() * 6, (r() - 0.5) * 0.6);
   g.add(head);
   for (let i = 0; i < 2; i++) {
-    const l = blade(6 * scale, 2 * scale, satin('#5a9a36'), 0.12, 0.03);
+    const l = blade(6 * scale, 2 * scale, satin('#5a9a36'), 0.12, 0.03, curve);
     const p = radiate(l, r() * 6.28, 0.5 + r() * 0.4);
     p.position.set(mid.x * (0.4 + i * 0.4), top.y * (0.2 + i * 0.25), mid.z * (0.4 + i * 0.4));
     g.add(p);
@@ -722,7 +723,10 @@ export const garden: Record<string, Builder> = {
     return g;
   },
 
-  /** A clump of flowers, about 40 across and 24 tall, with leaves at its foot (v: the main colour). */
+  /**
+   * A clump of flowers, about 40 across and 24 tall, with leaves at its foot (v: the main colour). Room dressing
+   * seen from the track across the garden, so built at half the curve detail of the kart-scale flowers.
+   */
   flowers: (v) => {
     const c = typeof v === 'string' ? v : '#ff70a6';
     const cols = [c, c, '#ffffff', c, '#ffd23f', c, '#ffffff', c, '#ffd23f'];
@@ -732,11 +736,11 @@ export const garden: Record<string, Builder> = {
       const a = i * 2.4;
       const d = 4 + r() * 11;
       const top = v3(Math.cos(a) * 3, 11 + r() * 12, Math.sin(a) * 3);
-      g.add(at(flowerOn(top, col, 0.9 + r() * 0.3, 30 + i), Math.cos(a) * d, 0, Math.sin(a) * d));
+      g.add(at(flowerOn(top, col, 0.9 + r() * 0.3, 30 + i, true), Math.cos(a) * d, 0, Math.sin(a) * d));
     });
     const leaf = satin('#4f8f30');
     for (let i = 0; i < 12; i++) {
-      const p = radiate(blade(7 + r() * 5, 2.4, leaf, 0.12, 0.05), r() * 6.28, 0.6 + r() * 0.5);
+      const p = radiate(blade(7 + r() * 5, 2.4, leaf, 0.12, 0.05, 3), r() * 6.28, 0.6 + r() * 0.5);
       p.position.set((r() - 0.5) * 26, 0, (r() - 0.5) * 26);
       g.add(p);
     }

@@ -47,7 +47,6 @@ export const glaze = (color: string) =>
 export const chrome = (color = '#e8ebf0') => made(`chrome|${color}`, () => new THREE.MeshStandardMaterial({ color, roughness: 0.1, metalness: 1 }));
 export const steel = (color = '#c4c9d1') => made(`steel|${color}`, () => new THREE.MeshStandardMaterial({ color, roughness: 0.34, metalness: 1 }));
 export const BRASS = '#d8b26a';
-export const COPPER = '#d08a5b';
 
 /** Something that glows: a bulb, a screen, an LED. Kept as its own draw call so bloom picks it up. */
 export const glow = (color: string, intensity = 1.5) =>
