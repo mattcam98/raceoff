@@ -498,8 +498,8 @@ export class GameView {
     const sp = clamp(Math.max(0, k.speed) / k.params.maxSpeed, 0, 1.6);
     const boost = k.boost > 0 || k.rocket > 0;
     // Faster pulls the camera back and up a touch; a boost pulls it further, so the kart surges away from it.
-    const dist = 6.4 + sp * 1.4 + (boost ? 1.4 : 0) + (k.rocket > 0 ? 1 : 0);
-    const height = 2.75 + sp * 0.55;
+    const dist = 5.7 + sp * 1.1 + (boost ? 1 : 0) + (k.rocket > 0 ? 0.8 : 0);
+    const height = 2.55 + sp * 0.45;
     // A drift's hop is a little bounce under a steady camera: hold the height of the ground through it, so the
     // view does not bob on every drift. Real jumps are followed as before.
     const baseY = k.hopping ? Math.min(kp.y, k.groundY) : kp.y;
@@ -524,7 +524,7 @@ export class GameView {
       damp(c.look.z, kp.z + Math.cos(c.heading) * lookAhead + rightZ(c.heading) * inside, 14, dt),
     );
     // Field of view widens with speed, and kicks out on a boost then settles: the rush of speed.
-    const fovWant = 64 + sp * 7 + (boost ? 9 : 0) + (k.rocket > 0 ? 6 : 0);
+    const fovWant = 62 + sp * 6 + (boost ? 8 : 0) + (k.rocket > 0 ? 5 : 0);
     c.fov = damp(c.fov, fovWant, fovWant > c.fov ? 7 : 2.5, dt);
     c.camera.fov = c.fov;
     // A spring for dips from landings and hits.
