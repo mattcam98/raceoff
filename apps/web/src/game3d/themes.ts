@@ -11,7 +11,7 @@ import { withRelief, type Relief } from './surface';
 import { buildProp } from './props';
 import { tex } from './textures';
 
-export type WallStyle = 'sugar' | 'pencil' | 'block' | 'tire' | 'rail' | 'soap' | 'stone' | 'domino' | 'crayon' | 'books';
+export type WallStyle = 'sugar' | 'pencil' | 'block' | 'tire' | 'rail' | 'soap' | 'stone';
 
 export interface Theme {
   sky: [string, string];
@@ -20,7 +20,6 @@ export interface Theme {
   fogFar: number;
   sun: { color: string; intensity: number; x: number; y: number; z: number };
   hemi: { sky: string; ground: string; intensity: number };
-  ambient?: number;
   /** Material for the floor the track sits on, and its texture repeat in world units. */
   ground: () => THREE.Material;
   groundRepeat: number;

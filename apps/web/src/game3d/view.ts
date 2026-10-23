@@ -17,6 +17,7 @@ import { buildKart, shieldUniforms, type KartRig } from './kartModel';
 import { Post, type PostView } from './post';
 import { Skids } from './skids';
 import { tex } from './textures';
+import type { Theme } from './themes';
 import { buildWorld, type World } from './world';
 
 export type CameraMode = 'chase' | 'intro' | 'cinema' | 'podium';
@@ -56,6 +57,7 @@ const SPARK_COLORS = ['#fff4d6', '#5ec8ff', '#ffa630', '#c77dff'];
 const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
 const tmpV3 = new THREE.Vector3();
+const tmpV4 = new THREE.Vector3();
 const tmpColor = new THREE.Color();
 
 export class GameView {
@@ -102,6 +104,8 @@ export class GameView {
   private shadowsDirty = true;
   private onContextRestored = () => {
     this.shadowsDirty = true;
+    // The room's reflections were baked on the GPU and went with the context: without this the scene goes dark.
+    if (this.world) this.bakeEnvironment(this.world.theme);
   };
   private confettiT = 0;
   /** Fired when the viewport layout changes, so the HUD can follow. */
@@ -150,9 +154,7 @@ export class GameView {
       const th = this.world.theme;
       this.scene.background = tex.sky(th.sky[0], th.sky[1]);
       this.scene.fog = new THREE.Fog(th.fog, th.fogNear, th.fogFar);
-      this.envTarget?.dispose();
-      this.envTarget = environmentFor(this.renderer, th);
-      this.scene.environment = this.envTarget.texture;
+      this.bakeEnvironment(th);
       this.scene.environmentIntensity = th.look.env;
       this.hemi.color.set(th.hemi.sky);
       this.hemi.groundColor.set(th.hemi.ground);
@@ -216,6 +218,8 @@ export class GameView {
     this.skids.clear();
     this.layout = layout;
     this.chases = viewers.map((kart) => this.makeChase(kart));
+    // The overview starts over this race's karts, rather than gliding over from wherever the last race ended.
+    this.overviewPos.set(0, 0, 0);
     this.cinemaKart = viewers[0] ?? 0;
     this.cinemaT = 0;
     this.introT = 0;
@@ -224,6 +228,12 @@ export class GameView {
     // Compiled while drawing into the frame's own target, so the variants match the ones rendering asks for.
     this.post.begin();
     this.fx.warm(this.renderer, this.scene, this.cinema);
+  }
+
+  private bakeEnvironment(th: Theme) {
+    this.envTarget?.dispose();
+    this.envTarget = environmentFor(this.renderer, th);
+    this.scene.environment = this.envTarget.texture;
   }
 
   private makeChase(kart: number): Chase {
@@ -423,9 +433,12 @@ export class GameView {
     const pr = this.pixelRatio;
     for (const r of this.rects) {
       const cam = this.cameraFor(r, dt);
-      // Drawing-buffer pixels, from the bottom left.
+      // Drawing-buffer pixels, from the bottom left. The edges are rounded rather than the sizes, so split-screen
+      // halves meet each other and the buffer's edge exactly (rounded sizes can leave a black line of pixels).
+      const x = Math.round(r.x * pr);
+      const y = Math.round((this.height - r.y - r.h) * pr);
       const v: PostView = {
-        x: Math.round(r.x * pr), y: Math.round((this.height - r.y - r.h) * pr), w: Math.round(r.w * pr), h: Math.round(r.h * pr),
+        x, y, w: Math.round((r.x + r.w) * pr) - x, h: Math.round((this.height - r.y) * pr) - y,
         near: cam.near, far: cam.far, focus: this.focusFor(r, cam), speed: this.speedFor(r),
       };
       views.push(v);
@@ -629,8 +642,8 @@ export class GameView {
     // The landing: behind the grid and a little above it, looking down the straight.
     const grid = track.pointAt(-22, 0);
     const ahead = track.pointAt(6, 0);
-    const land = new THREE.Vector3(grid.x, grid.y + 5, grid.z);
-    const landLook = new THREE.Vector3(ahead.x, ahead.y + 1.5, ahead.z);
+    const land = tmpV3.set(grid.x, grid.y + 5, grid.z);
+    const landLook = tmpV4.set(ahead.x, ahead.y + 1.5, ahead.z);
     const k = smooth(clamp((t - 0.45) / 0.55, 0, 1));
     // Arc over rather than cutting through: lift the path in the middle of the swoop.
     const lift = Math.sin(k * Math.PI) * ext * 0.08;
