@@ -399,8 +399,12 @@
   position: absolute;
   top: 54px;
   left: 50%;
-  transform: translateX(-50%);
+  /* Not transform, which the warning's nudge animation would replace. */
+  translate: -50%;
   z-index: 5;
+  /* As wide as the words, not half the screen (all that left: 50% leaves it). */
+  width: max-content;
+  max-width: calc(100vw - 24px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -414,6 +418,7 @@
   box-shadow: 0 4px 0 rgb(0 0 0 / 0.35);
 }
 .pad__banner-art {
+  flex: none;
   width: 1.6em;
   height: 1.6em;
   margin: -0.2em 0;
@@ -667,9 +672,10 @@
   background: radial-gradient(circle at 50% 30%, #3b4392, var(--ink-700) 55%, var(--ink-800));
   box-shadow: 0 6px 0 var(--ink-950), inset 0 0 0 3px rgb(255 255 255 / 0.15);
 }
+/* Sized from --item: a percentage of the button's content-sized grid track shrank the icon to nothing. */
 .pad-btn--item > i {
-  width: 66%;
-  height: 66%;
+  width: calc(var(--item) * 0.66);
+  height: calc(var(--item) * 0.66);
   display: block;
   filter: drop-shadow(0 3px 0 rgb(0 0 0 / 0.3));
 }
@@ -894,7 +900,6 @@
 /* Below a wrong-way banner, so both can show. */
 .pad__banner--giant {
   top: 96px;
-  white-space: nowrap;
 }
 .pad__giant {
   position: absolute;

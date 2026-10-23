@@ -133,7 +133,7 @@ export class Hud {
 
   setVisible(v: boolean) {
     this.visible = v;
-    this.root.style.display = v ? '' : 'none';
+    this.root.hidden = !v;
   }
 
   setRace(race: Race) {

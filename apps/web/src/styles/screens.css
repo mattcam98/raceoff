@@ -419,6 +419,8 @@
   /* Its own properties, so the entrance animation (a transform) does not undo the lift. */
   translate: 0 -0.6em;
   scale: 1.12;
+  /* Room for the scale-up, which the layout does not see: without it the cards touch. */
+  margin-inline: 1em;
   animation-delay: 1.4s;
 }
 .podium__spot--2 {
