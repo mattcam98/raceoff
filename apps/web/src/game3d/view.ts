@@ -102,6 +102,8 @@ export class GameView {
   private hidden = new Set<number>();
   /** Draw the shadow map on the next frame: a new track, or the podium. */
   private shadowsDirty = true;
+  /** Resize before the next frame is drawn. */
+  private sizeDirty = false;
   private onContextRestored = () => {
     this.shadowsDirty = true;
     // The room's reflections were baked on the GPU and went with the context: without this the scene goes dark.
@@ -123,7 +125,6 @@ export class GameView {
     // The shadow map is drawn only when the scene changes; a restored context starts with it empty.
     canvas.addEventListener('webglcontextrestored', this.onContextRestored);
     this.pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
-    this.renderer.setPixelRatio(this.pixelRatio);
 
     this.hemi = new THREE.HemisphereLight('#ffffff', '#888888', 1);
     this.sun = new THREE.DirectionalLight('#ffffff', 2);
@@ -134,7 +135,7 @@ export class GameView {
     // Soft-edged shadows, like a window's light rather than a spotlight's.
     this.sun.shadow.radius = 3;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.fx.group, this.skids.mesh);
-    this.resize();
+    this.applySize();
   }
 
   // ---------------------------------------------------------------- setup
@@ -326,11 +327,21 @@ export class GameView {
     this.cinemaT = 0;
   }
 
+  /**
+   * Resizing the canvas wipes what is on it, so it waits for the start of the next frame: done after a frame is
+   * drawn (a resolution step, or a ResizeObserver, which runs just before paint) it shows a black frame.
+   */
   resize() {
+    this.sizeDirty = true;
+  }
+
+  private applySize() {
+    this.sizeDirty = false;
     const w = Math.max(1, this.canvas.clientWidth);
     const h = Math.max(1, this.canvas.clientHeight);
     this.width = w;
     this.height = h;
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(w, h, false);
     this.post.setSize(w, h, this.pixelRatio);
     this.relayout();
@@ -410,6 +421,7 @@ export class GameView {
 
   render(alpha: number, dt: number) {
     this.time += dt;
+    if (this.sizeDirty) this.applySize();
     const race = this.race;
     if (!race || !this.world) {
       this.renderer.setRenderTarget(null);
@@ -475,7 +487,6 @@ export class GameView {
     else if (typical < 17.5 && this.pixelRatio < max) next = Math.min(max, this.pixelRatio + 0.15);
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
-      this.renderer.setPixelRatio(next);
       this.resize();
     }
   }
