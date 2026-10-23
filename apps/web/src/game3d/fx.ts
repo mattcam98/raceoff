@@ -338,7 +338,9 @@ const flameMaterial = new THREE.ShaderMaterial({
       vec3 core = vec3(1.0, 0.97, 0.9) * 2.4;
       vec3 c = mix(core, vColor, smoothstep(0.0, 0.35, t));
       c = mix(c, vColor * vec3(1.0, 0.35, 0.3) * 0.6, smoothstep(0.55, 1.0, t));
-      float a = pow(vFacing, 1.3) * (1.0 - smoothstep(0.35, 1.0, t)) * flick;
+      // Multisampling can shade an edge pixel past the triangle, where vFacing dips below 0: pow() of that is
+      // NaN, and bloom spreads one NaN pixel into black boxes.
+      float a = pow(max(vFacing, 0.0), 1.3) * (1.0 - smoothstep(0.35, 1.0, t)) * flick;
       gl_FragColor = vec4(c * a, a);
     }`,
   transparent: true,

@@ -743,7 +743,8 @@ const shieldMaterial = shareResource(new THREE.ShaderMaterial({
     varying vec3 vNormal;
     varying vec3 vView;
     void main() {
-      float rim = pow(1.0 - abs(dot(vNormal, vView)), 2.2);
+      // The varyings are not renormalised, so the dot can pass 1: pow() of a negative is NaN.
+      float rim = pow(max(1.0 - abs(dot(vNormal, vView)), 0.0), 2.2);
       float swirl = 0.5 + 0.5 * sin(vNormal.y * 8.0 + uTime * 3.0 + vNormal.x * 5.0);
       vec3 col = mix(uColor, vec3(1.0, 0.6, 1.0), swirl * 0.5);
       gl_FragColor = vec4(col * (rim * 1.4 + 0.06), 1.0);
