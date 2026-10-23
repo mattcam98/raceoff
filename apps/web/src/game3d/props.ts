@@ -23,8 +23,4 @@ export function buildProp(kind: string, v?: string | number): THREE.Object3D {
   return b(v);
 }
 
-export function hasProp(kind: string) {
-  return kind in LIBRARY;
-}
-
 export { decal };

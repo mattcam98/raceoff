@@ -193,14 +193,26 @@ function stats(id: string) {
     if (p.s) o.scale.setScalar(p.s);
     g.add(o);
   }
-  const props = count(bake(g));
-  const world = count(buildWorld(track).group);
+  const baked = bake(g);
+  const props = count(baked);
+  disposeTree(baked);
+  // Free what was measured, or every call leaves a whole world on the GPU.
+  const w = buildWorld(track);
+  const world = count(w.group);
+  w.dispose();
   return { id, props, world };
 }
 
 /** Every prop kind's own cost, unbaked: triangles and meshes. */
 function kindStats(kinds: string[]) {
-  return Object.fromEntries(kinds.map((s) => [s, count(bake(buildProp(...parse(s))))]));
+  return Object.fromEntries(
+    kinds.map((s) => {
+      const b = bake(buildProp(...parse(s)));
+      const n = count(b);
+      disposeTree(b);
+      return [s, n];
+    }),
+  );
 }
 
 Object.assign(window, { show, showTrack, stats, kindStats, galleryReady: document.fonts.ready.then(() => true) });
