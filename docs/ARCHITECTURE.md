@@ -87,17 +87,35 @@ without anyone spending long behind a wall.
   kart, and turning race events into sounds, particle effects, phone buzzes and
   dashboards. React draws the menus around it.
 - `view.ts` owns one WebGL renderer for the whole session and draws one camera
-  or up to four viewports with scissoring; the sun's shadow map is drawn once a
-  frame and shared. Cameras: chase (one per player), shared table-top, intro
-  flyover, and a cinematic orbit for the lobby's demo race, results and podium.
-  It lowers its resolution if frames get slow.
-- `world.ts` builds a track's scenery from its compiled form: road ribbons,
-  curbs, instanced walls, ramps, puddles, props and hazards. Everything static
-  is merged by `kit.bake`, plain colours sharing meshes through vertex colours,
-  so a whole room draws in a few dozen calls.
-- Every model (`props.ts`, `kartModel.ts`), texture (`textures.ts`), sound
-  effect and engine note (`audio/sound.ts`) and tune (`audio/music.ts`, nine of
-  them written as chord charts and melodies) is generated in code.
+  or up to four viewports into a single HDR buffer; the sun's shadow map is
+  drawn once a frame and shared. Cameras: chase (one per player: it trails the
+  slide in a drift, leans toward the inside, banks a little, dips on landings
+  and widens on boosts), shared table-top, the intro (a crane round the whole
+  table, then a swoop down behind the grid), and a cinematic orbit for the
+  lobby's demo race, results and podium.
+- `post.ts` runs the picture after the scene: depth of field per viewport (the
+  far room melts away, the miniature look), bloom for anything brighter than
+  white (sparks, flames, lamps, windows), speed blur at the edges on boosts,
+  vignette and a per-theme grade, then Neutral tone mapping. On a slow machine
+  the view first lowers its resolution, then drops depth of field,
+  multisampling and moving shadows.
+- Materials are physically based. `env.ts` bakes a stand-in of each theme's
+  room (walls, floor, a bright window where the sun is) into an environment
+  map, so paint, ceramic and chrome reflect the room they are in.
+  `surface.ts` turns painted textures into relief and roughness maps.
+- `world.ts` builds a track's scenery from its compiled form: asphalt road,
+  raised kerbs, instanced walls, ramps, glossy puddles, props, hazards and the
+  start gantry whose lights count down. `rooms.ts` builds the room round it,
+  with the window placed where the theme's sun is, so its light shafts and the
+  shadows agree; `themes.ts` furnishes each room. Everything static is merged
+  by `kit.bake`, plain finishes sharing meshes through vertex colours, so a
+  whole room draws in a few dozen calls.
+- Karts (`kartModel.ts`) are animated by `kartAnim.ts`: spring suspension,
+  steering, the driver leaning into corners, celebrating, dizzy after a hit.
+  Props are in `props.ts` and one `prop*.ts` module per room.
+- Every model, texture (`textures.ts`, `prop*Tex.ts`), sound effect and engine
+  note (`audio/sound.ts`) and tune (`audio/music.ts`, nine of them written as
+  chord charts and melodies) is generated in code.
 
 ## The Giant's Hand
 
