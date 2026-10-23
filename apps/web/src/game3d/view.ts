@@ -290,6 +290,13 @@ export class GameView {
     this.shadowsDirty = true;
   }
 
+  /** The last resort for slow machines (and headless tests): no depth of field, multisampling or moving shadows. */
+  dropQuality() {
+    this.highQuality = false;
+    this.post.setQuality(false);
+    this.movingShadows(false);
+  }
+
   /** A shadow map drawn once cannot hold moving things: on slow machines, karts and hazards stop casting. */
   private movingShadows(on: boolean) {
     for (const r of this.rigs) r.root.traverse((o) => (o.castShadow &&= on));
@@ -447,12 +454,7 @@ export class GameView {
     this.frameTimes = [];
     const max = Math.min(window.devicePixelRatio || 1, 1.5);
     let next = this.pixelRatio;
-    if (typical > 21 && this.pixelRatio <= 0.75 && this.highQuality) {
-      this.highQuality = false;
-      this.post.setQuality(false);
-      this.movingShadows(false);
-      return;
-    }
+    if (typical > 21 && this.pixelRatio <= 0.75 && this.highQuality) return this.dropQuality();
     if (typical > 21 && this.pixelRatio > 0.6) next = Math.max(0.6, this.pixelRatio - 0.15);
     else if (typical < 17.5 && this.pixelRatio < max) next = Math.min(max, this.pixelRatio + 0.15);
     if (next !== this.pixelRatio) {

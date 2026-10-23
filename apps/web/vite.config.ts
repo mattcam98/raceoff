@@ -14,5 +14,5 @@ export default defineConfig({
       '/socket.io': { target: server, ws: true },
     },
   },
-  build: { target: 'es2022', sourcemap: true, chunkSizeWarningLimit: 900 },
+  build: { target: 'es2022', sourcemap: true, chunkSizeWarningLimit: 1200 },
 });
