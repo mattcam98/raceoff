@@ -398,7 +398,11 @@ export class Fx {
   readonly soft = new Cloud(2048, false);
   readonly flames = new Flames();
   readonly group = new THREE.Group();
-  /** A blast's light on its surroundings: one light, always there, so adding it never recompiles a shader. */
+  /**
+   * A blast's light on its surroundings. Hidden between blasts: a light at zero intensity still costs every lit
+   * pixel a light. Showing it changes the light count, which needs other shader variants; `warm` compiles those
+   * when a race is set up, and three keeps both variants per material, so a blast never stalls on a compile.
+   */
   private light = new THREE.PointLight('#ffb35c', 0, 70, 1.6);
   private lightT = 0;
   private lightPeak = 0;
@@ -410,7 +414,15 @@ export class Fx {
 
   constructor() {
     this.group.add(this.soft.mesh, this.glow.mesh, this.flames.mesh, this.light);
+    this.light.visible = false;
     active = this;
+  }
+
+  /** Compile the scene's shaders with the blast light showing too, ahead of the first blast. */
+  warm(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
+    this.light.visible = true;
+    renderer.compile(scene, camera);
+    this.light.visible = false;
   }
 
   /** Kept for the view, which sets it per viewport; quads are sized in the world and need no pixel scale. */
@@ -426,6 +438,7 @@ export class Fx {
     if (this.lightT > 0) {
       this.lightT = Math.max(0, this.lightT - dt);
       this.light.intensity = this.lightPeak * (this.lightT / 0.45) ** 2;
+      this.light.visible = this.lightT > 0;
     }
   }
 
@@ -435,6 +448,7 @@ export class Fx {
     this.kickT.length = 0;
     this.lightT = 0;
     this.light.intensity = 0;
+    this.light.visible = false;
   }
 
   /** One particle. `intensity` scales its colour: above 1 glows, and glowing kinds bloom above about 2. */
@@ -464,6 +478,7 @@ export class Fx {
     this.lightPeak = intensity;
     this.lightT = 0.45;
     this.light.intensity = intensity;
+    this.light.visible = true;
   }
 
   // ---------------------------------------------------------------- set pieces

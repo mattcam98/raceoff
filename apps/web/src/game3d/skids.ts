@@ -59,7 +59,7 @@ export class Skids {
   private pos = new Float32Array(MAX * 4 * 3);
   private mark4 = new Float32Array(MAX * 4 * 4);
   private next = 0;
-  private last = new Map<string, End>();
+  private last = new Map<number, End>();
   private geo = new THREE.BufferGeometry();
   private material: THREE.ShaderMaterial;
   private time = 0;
@@ -89,10 +89,10 @@ export class Skids {
   }
 
   /**
-   * Lay a mark from where this wheel was last to (x, y, z). Pass `on = false` to lift the wheel.
+   * Lay a mark from where wheel `key` was last to (x, y, z). Pass `on = false` to lift the wheel.
    * `tone` 0 is rubber on a hard surface, 1 a pale scuff in dirt or cloth.
    */
-  mark(key: string, x: number, y: number, z: number, on: boolean, strength = 0.5, tone = 0) {
+  mark(key: number, x: number, y: number, z: number, on: boolean, strength = 0.5, tone = 0) {
     let prev = this.last.get(key);
     if (!on) {
       if (prev) prev.joined = false;

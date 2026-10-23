@@ -221,6 +221,9 @@ export class GameView {
     this.introT = 0;
     this.shadowsDirty = true;
     this.relayout();
+    // Compiled while drawing into the frame's own target, so the variants match the ones rendering asks for.
+    this.post.begin();
+    this.fx.warm(this.renderer, this.scene, this.cinema);
   }
 
   private makeChase(kart: number): Chase {
@@ -714,7 +717,7 @@ export class GameView {
     rig.shadow.scale.set(ss, 1, ss);
 
     if (k.respawnT > 0) {
-      for (let w = 0; w < 2; w++) this.skids.mark(`${k.index}:${w}`, 0, 0, 0, false);
+      for (let w = 0; w < 2; w++) this.skids.mark(k.index * 2 + w, 0, 0, 0, false);
       return;
     }
     rig.root.updateMatrixWorld();
