@@ -28,6 +28,8 @@ const tmpS = new THREE.Vector3();
 const tmpP = new THREE.Vector3();
 const tmpC = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
+const LAMP_RED = new THREE.Color('#ff2a1a');
+const LAMP_GREEN = new THREE.Color('#3dff6a');
 
 // ---------------------------------------------------------------- strips
 
@@ -805,7 +807,7 @@ export function buildWorld(track: Track): World {
       const lit = time < -3 ? 0 : time < 0 ? Math.min(3, Math.floor(time + 4)) : 3;
       start.lamps.forEach((m, i) => {
         const go = time >= 0;
-        m.emissive.set(go ? '#3dff6a' : '#ff2a1a');
+        m.emissive.copy(go ? LAMP_GREEN : LAMP_RED);
         m.emissiveIntensity = i < lit ? (go ? 6 * Math.max(0.15, 1 - time / 4) : 6) : 0;
       });
       hazards.forEach((h, i) => hazardViews[i]?.update(h, time));
@@ -813,8 +815,8 @@ export function buildWorld(track: Track): World {
     dispose() {
       if (disposed) return;
       disposed = true;
+      // The pads' texture copy goes with them: it is their material's own map.
       disposeTree(group);
-      padTex.dispose();
     },
   };
 }

@@ -8,6 +8,8 @@
 import * as THREE from 'three';
 import { shareResource } from './kit';
 
+// Keyed by the picture (a texture's source), not the texture: a world's floor is a fresh copy of a cached
+// texture each time, and keying by that copy would paint and keep a new relief map on every track change.
 const normals = new Map<string, THREE.Texture>();
 const roughs = new Map<string, THREE.Texture>();
 
@@ -42,7 +44,7 @@ function toTexture(w: number, h: number, fill: (i: number, out: Uint8ClampedArra
  * by default dark parts are low (grout, grain, cracks). `blur` softens the relief, in pixels.
  */
 export function bumpFrom(t: THREE.Texture, strength = 2, invert = false, blur = 1): THREE.Texture {
-  const key = `${t.uuid}|${strength}|${invert}|${blur}`;
+  const key = `${t.source.uuid}|${strength}|${invert}|${blur}`;
   let n = normals.get(key);
   if (n) return n;
   const { w, h, lum } = pixels(t);
@@ -76,7 +78,7 @@ export function bumpFrom(t: THREE.Texture, strength = 2, invert = false, blur = 
 
 /** A roughness map from brightness: dark parts get `dark`, light parts `light` (green channel, as three reads it). */
 export function roughFrom(t: THREE.Texture, dark: number, light: number): THREE.Texture {
-  const key = `${t.uuid}|${dark}|${light}`;
+  const key = `${t.source.uuid}|${dark}|${light}`;
   let r = roughs.get(key);
   if (r) return r;
   const { w, h, lum } = pixels(t);

@@ -338,29 +338,6 @@ export const tex = {
       return finish(c);
     }),
 
-  itemBox: () =>
-    cached('itembox', () => {
-      const { c, g } = canvas(128, 128);
-      const grd = g.createLinearGradient(0, 0, 128, 128);
-      grd.addColorStop(0, '#ff5fa2');
-      grd.addColorStop(0.35, '#ffd23f');
-      grd.addColorStop(0.65, '#3ddc84');
-      grd.addColorStop(1, '#3d9bff');
-      g.fillStyle = grd;
-      g.fillRect(0, 0, 128, 128);
-      g.fillStyle = 'rgba(255,255,255,0.35)';
-      g.fillRect(6, 6, 116, 116);
-      g.font = 'bold 92px system-ui, sans-serif';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.lineWidth = 8;
-      g.strokeStyle = 'rgba(40,20,80,0.6)';
-      g.strokeText('?', 64, 70);
-      g.fillStyle = '#fff';
-      g.fillText('?', 64, 70);
-      return finish(c, false);
-    }),
-
   /** A soft round blob, for shadows and glows. */
   blob: () =>
     cached('blob', () => {

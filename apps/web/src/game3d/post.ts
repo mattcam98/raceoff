@@ -209,6 +209,8 @@ export class Post {
   private height = 1;
   private dofOn = true;
   private dofStrength = 4;
+  /** The passes that need the viewports' rectangles, listed once rather than every frame. */
+  private rectsFor = [this.dofH, this.dofV, this.grade];
 
   constructor(private renderer: THREE.WebGLRenderer) {
     this.scene = this.makeTarget();
@@ -278,7 +280,6 @@ export class Post {
 
   /** Begin a frame: the scene target is cleared and ready for the viewports. */
   begin() {
-    this.renderer.setRenderTarget(this.scene);
     this.renderer.setClearColor('#000000', 1);
     this.scene.scissorTest = false;
     this.renderer.setRenderTarget(this.scene);
@@ -297,14 +298,13 @@ export class Post {
   end(views: PostView[], time: number) {
     this.scene.scissorTest = false;
     const n = Math.min(MAX_VIEWS, views.length);
-    for (const m of [this.dofH, this.dofV, this.grade]) {
-      m.uniforms.uCount.value = n;
-      views.slice(0, n).forEach((v, i) => m.uniforms.uRects.value[i].set(v.x, v.y, v.w, v.h));
-    }
-    views.slice(0, n).forEach((v, i) => {
+    for (let i = 0; i < n; i++) {
+      const v = views[i];
+      for (const m of this.rectsFor) m.uniforms.uRects.value[i].set(v.x, v.y, v.w, v.h);
       this.dofH.uniforms.uClip.value[i].set(v.near, v.far, v.focus);
       this.grade.uniforms.uSpeed.value[i] = v.speed;
-    });
+    }
+    for (const m of this.rectsFor) m.uniforms.uCount.value = n;
     this.grade.uniforms.uTime.value = time % 100;
     this.composer.render();
   }
