@@ -684,7 +684,8 @@
   position: absolute;
   left: 50%;
   top: 0.8em;
-  transform: translateX(-50%);
+  /* Not transform, which the urgent nudge animation would replace. */
+  translate: -50%;
   display: flex;
   align-items: center;
   gap: 0.4em;
@@ -719,6 +720,13 @@
   gap: 0.35em;
   z-index: 2;
 }
+/* Split views meet at the top middle, where their times and items sit: the clock and the feed drop below them. */
+.hud:has(> .hud-panel[data-pos='left'], > .hud-panel[data-pos='tl']) > .hud-closing {
+  top: 16%;
+}
+.hud:has(> .hud-panel[data-pos='left'], > .hud-panel[data-pos='tl']) > .hud-feed {
+  top: calc(16% + 2.9em);
+}
 .hud-feed__row {
   --pc: var(--sun);
   display: flex;
@@ -732,7 +740,8 @@
   border-radius: 999px;
   background: rgb(11 14 38 / 0.85);
   box-shadow: inset 0 0 0 0.14em var(--pc), 0 0.4em 1em -0.3em rgb(0 0 0 / 0.6);
-  animation: slide-up 260ms var(--ease-out) both;
+  /* No fill after it ends: a filled animation would hold opacity and transform over .is-out's fade. */
+  animation: slide-up 260ms var(--ease-out) backwards;
   transition: opacity 450ms, transform 450ms;
 }
 .hud-feed__icon {

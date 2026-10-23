@@ -49,6 +49,13 @@
   transform: none;
   flex-direction: row;
 }
+/* Three or four views leave no clear edge (the order is hidden then): under the minimap in the middle. */
+.tv__hud:has(> .hud:not([hidden]) > .hud-tower[data-hidden='1']) ~ .tv__corner {
+  top: calc(50% + 13.5vmin + 10px);
+  right: 50%;
+  transform: translateX(50%);
+  flex-direction: row;
+}
 .tv__corner.is-idle {
   opacity: 0;
   pointer-events: none;
@@ -527,10 +534,14 @@
   stroke: #0b0e26;
   stroke-width: 2;
 }
+/* A fixed height, not the outline's shape: at full width two rows of cards pushed the panel past the screen. */
+.track-card .track-map {
+  height: 3.6em;
+}
 .track-card__dice {
   display: grid;
   place-items: center;
-  aspect-ratio: 100 / 64;
+  height: 1.8em; /* the same 3.6em, in this box's doubled font */
   border-radius: 8px;
   font-family: var(--font-display);
   font-weight: 900;
