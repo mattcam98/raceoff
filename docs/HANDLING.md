@@ -210,9 +210,9 @@ The numbers above were tuned one mechanic at a time. This pass drove the karts t
 2. **Leaning on a wall was sticky.** Every step touching a wall cost 1% of the speed, however gently. Sixty touches a second is more than the engine makes back, so a kart sliding along a wall with the thumb resting a little toward it sat at 73% of top speed until the player noticed and steered away.
    - *Change:* the loss now comes only from how hard the kart hits (linear and squared in how square-on), plus a grind of 0.6% a step scaled by how far the steering pushes into the wall. Sliding along with a light lean costs nothing; grinding at full lock still holds the kart at 77%, so riding the wall is no shortcut.
 3. **A DRIFT press could silently do nothing.** A press while the kart was in the air (a crest, a jump, the end of another hop) or below 9 m/s (getting going after a knock) was dropped. Holding the button did nothing until it was let go and pressed again. The drifting thumbs ran into this off the jumps.
-   - *Change:* such a press is kept while the button is held (`driftArmed`): the kart hops on landing, or as soon as it is up to speed. Letting go first cancels it. A drift that a hard knock ends is not restarted.
+   - *Change:* such a press is kept while the button is held (`driftArmed`): the kart hops on landing, or as soon as it is up to speed. Letting go first cancels it. A drift that a hard knock ends is not restarted, and a rocket-start press made a moment after GO is spent on the start, not kept for a drift.
 4. **The computers drove into rollers.** Garage's paint cans and Sandbox's football hit 3–4 computers a lap: 7.7 hazard hits a race at normal and 8.5 at hard; 28.7 on Garage, 5.7 of them a second hit within 3 s. The computers only timed stompers. For anything else they steered a little, often into the path.
-   - *Change:* a computer checks whether holding its speed, or flooring it, meets a moving hazard within the next 0.9 s. It floors it if that gets through first, holds its speed if that does, and otherwise stops short and waits, never creeping into the path. After 2 s of waiting it commits, so a roller that sweeps right up to where it stopped cannot hold it for ever. (Looking 1.2 s ahead with a wider margin stopped them too often: waiting cost more than the hits had. Swerving into the roller's open lane was tried too, and hit more.)
+   - *Change:* a computer checks whether holding its speed, or flooring it, meets a moving hazard within the next 0.9 s. It floors it if that gets through first, holds its speed if that does, and otherwise stops short and waits, never creeping into the path. After about 4 s of waiting it commits, so a roller that sweeps right up to where it stopped cannot hold it for ever. (It was 2 s, which gave up while a slow roller such as Sandbox's football still sat in its lane. Once a computer starts waiting it also keeps watching: before, every frame was a fresh roll against its awareness, and a miss floored it into the path, so easy computers hit hazards 7–17 times a race.) (Looking 1.2 s ahead with a wider margin stopped them too often: waiting cost more than the hits had. Swerving into the roller's open lane was tried too, and hit more.)
 5. **Top speed decided everything.** Each speed point was 1.5 m/s, 5% of top speed; handling, acceleration and weight together were worth about 1% in a time trial. Zip in the Racer won 30 of 48 rotated races (average place 1.7) and Mochi in the Buggy averaged 6.5. The steady thumb lapped 13% slower in the Mochi.
    - *Change:* a speed point is now 0.6 m/s (the middle kart is unchanged), and handling scales how fast sparks charge. The steady thumb's spread across the eight line-up karts is now 3.9%, and rotated races average from 2.9 (Zip) to 5.9 (Mochi). Speed is still the strongest stat, as in Mario Kart, but no longer the only one.
 
@@ -231,6 +231,8 @@ The numbers above were tuned one mechanic at a time. This pass drove the karts t
 | Walls a race, eight computers, normal / hard 150cc | 15.3 / 23.3 | 5.2 / 9.8 |
 | Time-trial spread across the line-up (steady thumb) | 12.8% | 3.9% |
 
+A second pass re-measured hazard hits (`.scratch/hz.ts`: six seeds, items on, averaged over all six tracks). This code gave 2.0 / 2.6 a race at normal / hard 150cc rather than 1.2 / 1.9, and 1.6 / 2.4 after the waiting fixes in item 4. Easy computers at 100cc, on the four tracks with hazards, went from 8.7 hits a race to 1.6.
+
 The steady thumb, which never drifts, laps about 2% slower than before because its Volt in the Racer (speed 4) lost a little top speed. The drifting thumbs are still slower than the steady one: they are crude drivers that drift every bend over 45 m. The computers, which plan their drifts, gain from them. Winners of eight-computer races are within 1–3 s of before; on Sandbox and Garage about 3 s slower, the time spent letting the roller pass. Against seven computers the steady thumb's average place is unchanged at normal (2.3) and a little better at hard (5.1 → 4.6).
 
 **Looked at and left alone.**
@@ -247,9 +249,9 @@ The steady thumb, which never drifts, laps about 2% slower than before because i
   - drift speed and turn range, the full-rate charge for a partial lean, and slower charge steering out;
   - automatic drift and its orange cap, and that there is no automatic drift without the assist;
   - smart steering keeping karts on the road;
-  - the slipstream boost and the graded rocket start;
+  - the slipstream boost and the graded rocket start, and a late start press held on not hopping into a drift;
   - wall grazes vs square hits, sliding along a wall without sticking, and item rank by gap;
   - the drift's arcs covering the tracks' bends, and a DRIFT press kept through the air and up to speed;
-  - computers waiting for a roller instead of driving into it, and top speed not deciding everything;
+  - computers, easy ones too, waiting for a roller instead of driving into it, including Sandbox's slow football, and top speed not deciding everything;
   - full eight-computer races on every track.
 - **Old vs new code** (`.scratch/compare.ts`): eight-computer races on the same seeds give winning times within about 3 s and similar spreads. Wall hits stay within seed-to-seed noise once the slipstream was tightened; an early, looser version boosted computer karts into corners.

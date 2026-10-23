@@ -241,16 +241,19 @@ export class AiDriver {
     }
     // A roller or a train crossing ahead: beat it if flooring it gets through, otherwise stop short and let it
     // pass, never creeping into its path. Having waited a while (a roller that sweeps right up to where it
-    // stopped never looks clear), it commits.
+    // stopped never looks clear), it commits. The wait outlasts the 3 to 3.5 s a roller can sit in one lane:
+    // committing after 2 s drove into rollers still dwelling at the end of their sweep.
     let waiting = false;
     this.waitT = Math.max(-1.5, this.waitT - dt);
-    if (race.hazards.length && this.waitT < 2 && this.rand() < this.skill.awareness + 0.2) {
+    // Once it has started waiting it keeps watching: a lapse of attention mid-wait floored it into the path.
+    const watching = this.waitT > -1.5 || this.rand() < this.skill.awareness + 0.2;
+    if (race.hazards.length && this.waitT < 4 && watching) {
       const plan = this.movingHazard(speed);
       if (plan === 'go') ((gas = true), (brake = false));
       else if (plan === 'hold') ((gas = false), (waiting = true));
       else if (plan === 'wait') ((gas = false), (brake = true), (waiting = true));
       if (waiting) this.waitT += dt * 2;
-      if (this.waitT >= 2) this.waitT = 3.5;
+      if (this.waitT >= 4) this.waitT = 5.5;
     }
 
     // Drift long, tight bends.

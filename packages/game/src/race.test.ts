@@ -361,20 +361,37 @@ describe('drifting', () => {
 describe('computers', () => {
   it('wait for a roller crossing the road, or beat it, rather than driving into it', () => {
     let hits = 0;
-    for (const seed of [1, 2, 3, 4]) {
-      const track = getTrack('breakfast');
-      const race = new Race({ track, racers: cpus(1), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed });
-      // A ball rolling from wall to wall across the start straight, every 3 s.
-      const a = track.pointAt(70, -1.1);
-      const b = track.pointAt(70, 1.1);
-      const def = { kind: 'roller' as const, r: 3.5, phase: seed * 0.7, motion: { type: 'pingpong' as const, ax: a.x, az: a.z, bx: b.x, bz: b.z, period: 3 } };
-      race.hazards.push(hazardAt(def, 0));
-      while (race.time < 8) {
+    // Easy computers too: a lapse of attention mid-wait used to floor it into the roller's path.
+    for (const difficulty of ['normal', 'easy'] as const) {
+      for (const seed of [1, 2, 3, 4]) {
+        const track = getTrack('breakfast');
+        const race = new Race({ track, racers: cpus(1), laps: 3, cc: 100, items: 'off', difficulty, seed });
+        // A ball rolling from wall to wall across the start straight, every 3 s.
+        const a = track.pointAt(70, -1.1);
+        const b = track.pointAt(70, 1.1);
+        const def = { kind: 'roller' as const, r: 3.5, phase: seed * 0.7, motion: { type: 'pingpong' as const, ax: a.x, az: a.z, bx: b.x, bz: b.z, period: 3 } };
+        race.hazards.push(hazardAt(def, 0));
+        while (race.time < 8) {
+          race.step([]);
+          hits += race.events.filter((e) => e.t === 'hit' && e.how === 'hazard').length;
+          race.events.length = 0;
+        }
+        expect(race.karts[0].s, `${difficulty} seed ${seed} got past`).toBeGreaterThan(90);
+      }
+    }
+    expect(hits).toBe(0);
+  });
+
+  it("wait out Sandbox's slow football instead of giving up while it still sits in their lane", () => {
+    let hits = 0;
+    for (let seed = 1; seed <= 6; seed++) {
+      const race = new Race({ track: getTrack('sandbox'), racers: cpus(1), laps: 1, cc: 100, items: 'off', difficulty: 'normal', seed });
+      while (race.time < 60 && race.karts[0].dist < 880) {
         race.step([]);
         hits += race.events.filter((e) => e.t === 'hit' && e.how === 'hazard').length;
         race.events.length = 0;
       }
-      expect(race.karts[0].s, `seed ${seed} got past`).toBeGreaterThan(90);
+      expect(race.karts[0].dist, `seed ${seed} got past`).toBeGreaterThan(880);
     }
     expect(hits).toBe(0);
   });
@@ -454,6 +471,17 @@ describe('assists and catch-up', () => {
     expect(boostFor(-0.08)).toBeGreaterThan(boostFor(-0.35) + 0.4);
     expect(boostFor(-0.35)).toBeGreaterThan(0);
     expect(boostFor(-1.0)).toBe(0);
+  });
+
+  it('spends a slightly late start press on the start: held on, it does not hop into a drift', () => {
+    const race = new Race({ track: getTrack('breakfast'), racers: human(), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed: 1 });
+    let hopped = false;
+    while (race.time < 1) {
+      race.step([{ ...NO_INPUT, gas: true, steer: 0.5, drift: race.time >= 0.05 && race.time < 0.6 }]);
+      hopped ||= race.karts[0].hopping || race.karts[0].driftDir !== 0;
+    }
+    expect(race.karts[0].boost).toBeGreaterThan(0);
+    expect(hopped).toBe(false);
   });
 });
 

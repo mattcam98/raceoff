@@ -236,6 +236,8 @@ export class Race {
       if (this.time < START_LATE && !k.cpu && Number.isNaN(this.startPress[k.index]) && k.input.drift && !k.lastDrift) {
         this.startPress[k.index] = this.time;
         this.startBoost(k, this.time);
+        // The press was spent on the start: held on, it must not also hop into a drift once up to speed.
+        k.lastDrift = true;
       }
       if (k.input.smart && !k.cpu) this.smartSteer(k);
       const auto = k.rocket > 0 ? this.autopilotHeading(k) : null;
