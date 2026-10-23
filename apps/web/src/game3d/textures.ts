@@ -195,17 +195,6 @@ export const tex = {
       g.fillStyle = '#8d9097';
       g.fillRect(0, 0, 512, 512);
       speckle(g, 512, 512, 9000, ['#7f838a', '#9a9ea5', '#6f737a', '#a7aab0'], [1, 3], 41);
-      const r = rand(42);
-      for (let i = 0; i < 7; i++) {
-        const grd = g.createRadialGradient(0, 0, 0, 0, 0, 60 + r() * 60);
-        grd.addColorStop(0, 'rgba(40,40,45,0.35)');
-        grd.addColorStop(1, 'rgba(40,40,45,0)');
-        g.save();
-        g.translate(r() * 512, r() * 512);
-        g.fillStyle = grd;
-        g.fillRect(-140, -140, 280, 280);
-        g.restore();
-      }
       g.strokeStyle = 'rgba(30,30,35,0.4)';
       g.lineWidth = 2;
       g.strokeRect(0, 0, 512, 512);

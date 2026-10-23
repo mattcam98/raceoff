@@ -699,7 +699,8 @@ export function buildWorld(track: Track): World {
     m.receiveShadow = true;
     stat.add(m);
   } else {
-    const size = 1400;
+    // Big enough that its edge is never seen against the sky.
+    const size = 5000;
     groundMat.map?.repeat.set(size / theme.groundRepeat, size / theme.groundRepeat);
     withRelief(groundMat, theme.groundRelief);
     const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2), groundMat);

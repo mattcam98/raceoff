@@ -58,7 +58,8 @@ const beamFrag = /* glsl */ `
   void main() {
     // Soft across each face, fading out toward the floor: light in dusty air, not a solid prism.
     float across = sin(vUv.x * 3.14159);
-    gl_FragColor = vec4(uColor * uStrength * across * across * vFade, 1.0);
+    float along = smoothstep(1.0, 0.75, vFade) * vFade;
+    gl_FragColor = vec4(uColor * uStrength * across * across * along, 1.0);
   }`;
 
 /** A shaft of light: the tube swept from a window pane along the sunlight to where it lands. */
@@ -180,7 +181,7 @@ function windowFrame(w: number, h: number, outside: string) {
   g.add(at(box(t * 0.6, h, 6, frame), 0, -h / 2, 0), at(box(w, t * 0.6, 6, frame), 0, -t * 0.3, 0));
   g.add(at(box(w + t * 4, 4, 26, frame), 0, -h / 2 - t - 4, 8));
   // The glass shows the bright day outside: brighter than white, so it blooms like a real window does.
-  const glow = new THREE.Color(outside).multiplyScalar(3.2);
+  const glow = new THREE.Color(outside).multiplyScalar(1.8);
   const glass = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: glow, fog: false }));
   glass.position.z = -3;
   glass.userData.dynamic = true;
@@ -301,6 +302,9 @@ export function buildSky(sunDir: THREE.Vector3): THREE.Object3D {
   u.mieCoefficient.value = 0.004;
   u.mieDirectionalG.value = 0.85;
   u.sunPosition.value.copy(sunDir).normalize();
+  // The physical sky is far brighter than the rest of the scene is exposed for: bring it into range.
+  sky.material.fragmentShader = sky.material.fragmentShader.replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * 0.075, 1.0 );');
+  sky.material.fog = false;
   sky.userData.dynamic = true;
   return sky;
 }

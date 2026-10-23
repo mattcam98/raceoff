@@ -188,7 +188,7 @@ export const THEMES: Record<string, Theme> = {
         lower: { material: wallMat(tex.panelling('#e9dcc4'), 1.5, 0.6), dado: 110 },
         skirting: '#fbf7ef',
         outside: '#d8ecff',
-        shafts: 0.08,
+        shafts: 0.025,
       }, (put, win) => {
         // A run of kitchen units and the fridge along the back wall.
         const back = awayFrom(win, 0);
@@ -251,8 +251,8 @@ export const THEMES: Record<string, Theme> = {
     backdrop: (t, th) =>
       room(th, floorRoom(t), {
         floor: null,
-        half: 540,
-        height: 760,
+        half: 430,
+        height: 560,
         wall: wallMat(tex.plaster('#dff3f6')),
         lower: { material: wallMat(tex.tiles('#d4f1f7', '#9fc2cc', 4), 3, 0.2), dado: 240 },
         skirting: '#ffffff',
@@ -363,7 +363,7 @@ export const THEMES: Record<string, Theme> = {
     hemi: { sky: '#7d8fd6', ground: '#3a2f2a', intensity: 1.0 },
     ground: () => mat('#ffffff', { map: tex.concrete() }),
     groundRepeat: 70,
-    groundRelief: { strength: 1.5, rough: [0.95, 0.55] },
+    groundRelief: { strength: 0.7, rough: [0.95, 0.6] },
     road: { base: '#262833', line: '#ffd23f', edge: '#ffd23f', dash: true },
     roughRoad: () => mat('#ffffff', { map: tex.concrete() }),
     skirt: () => mat('#ffffff', { map: tex.wood('#a77b4f', '#7a5233', 3) }),
