@@ -193,7 +193,7 @@ function foam(g: THREE.Group, x: number, y: number, z: number, size: number, n: 
     const a = r() * Math.PI * 2;
     const d = r() * size;
     const s = size * (0.35 + r() * 0.4) * (1 - (d / size) * 0.5);
-    const b = mesh(new THREE.SphereGeometry(s, 10, 6), m);
+    const b = mesh(new THREE.SphereGeometry(s, 8, 5), m);
     b.scale.y = 0.75;
     b.position.set(x + Math.cos(a) * d, y + s * 0.25 + r() * s * 0.3, z + Math.sin(a) * d);
     g.add(b);
@@ -202,7 +202,7 @@ function foam(g: THREE.Group, x: number, y: number, z: number, size: number, n: 
 
 /** A few clear soap bubbles in one mesh, so they cost one draw call. */
 function bubbles(spots: [number, number, number, number][]) {
-  const geos = spots.map(([x, y, z, r]) => new THREE.SphereGeometry(r, 12, 8).translate(x, y, z));
+  const geos = spots.map(([x, y, z, r]) => new THREE.SphereGeometry(r, 10, 6).translate(x, y, z));
   const o = mesh(mergeGeometries(geos), glass('#f4fbff', 0.06, 0.02), false);
   o.renderOrder = 3;
   return o;
