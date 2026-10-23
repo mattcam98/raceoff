@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { CHARACTERS, PLAYER_COLORS, PLAYER_LABELS, characterById } from '@raceoff/shared';
 import { clamp, damp, fwdX, fwdZ, lerp, rightX, rightZ, wrapAngle, SURF, type Kart, type Race, type RaceEvent, type Track } from '@raceoff/game';
 import { Fx } from './fx';
+import { emitEvent, emitKart } from './fxKart';
 import { environmentFor } from './env';
 import { disposeTree, mat } from './kit';
 import { ItemsView } from './items3d';
@@ -339,6 +340,7 @@ export class GameView {
   event(e: RaceEvent) {
     const race = this.race;
     if (!race) return;
+    emitEvent(this.fx, e, race, this.rigs, this.dustColor());
     const shakeFor = (k: number, amount: number) => {
       for (const c of this.chases) if (c.kart === k) c.shake = Math.max(c.shake, amount);
     };
@@ -346,36 +348,21 @@ export class GameView {
       for (const c of this.chases) if (c.follow === k) c.dipV -= v;
     };
     switch (e.t) {
-      case 'box':
-        this.fx.burst(e.x, e.y, e.z, ['#ff5fa2', '#ffd23f', '#3ddc84', '#3d9bff', '#ffffff'], 26, 12, 0.5, 0.5);
-        break;
-      case 'hit': {
-        const k = race.karts[e.k];
-        this.fx.burst(k.x, k.y + 2, k.z, ['#ffffff', '#ffd23f'], 18, 8, 0.6, 0.6);
+      case 'hit':
         shakeFor(e.k, 0.6);
         dipFor(e.k, 5);
         break;
-      }
       case 'blast':
-        this.fx.explosion(e.x, e.y, e.z);
         for (const c of this.chases) {
           const k = race.karts[c.follow];
           const d = Math.hypot(k.x - e.x, k.z - e.z);
           if (d < 40) c.shake = Math.max(c.shake, 1 - d / 40);
         }
         break;
-      case 'fall': {
-        const k = race.karts[e.k];
-        if (e.water) this.fx.splash(k.x, k.y + 0.5, k.z);
-        break;
-      }
-      case 'land': {
-        const k = race.karts[e.k];
-        for (let i = 0; i < (e.hard ? 12 : 5); i++) this.fx.dust(k.x, k.y, k.z, '#d8cfc0', 1.4);
+      case 'land':
         if (e.hard) shakeFor(e.k, 0.35);
         dipFor(e.k, e.hard ? 7 : 3);
         break;
-      }
       case 'wall':
         if (e.strength > 10) shakeFor(e.k, Math.min(0.5, e.strength / 40));
         break;
@@ -383,28 +370,6 @@ export class GameView {
         shakeFor(e.a, 0.2);
         shakeFor(e.b, 0.2);
         break;
-      case 'boost': {
-        const k = race.karts[e.k];
-        const rig = this.rigs[e.k];
-        for (const ex of rig.exhausts) {
-          tmpV.copy(ex).applyMatrix4(rig.body.matrixWorld);
-          for (let i = 0; i < 8; i++) this.fx.flame(tmpV.x, tmpV.y, tmpV.z, -fwdX(k.h) * 10, -fwdZ(k.h) * 10, e.level >= 3);
-        }
-        break;
-      }
-      case 'pop':
-        this.fx.burst(e.x, e.y, e.z, ['#3ddc84', '#ffffff'], 14, 7, 0.5, 0.4);
-        break;
-      case 'finish': {
-        const k = race.karts[e.k];
-        if (!k.cpu) this.fx.confetti(k.x, k.y + 3, k.z, 120);
-        break;
-      }
-      case 'respawn': {
-        const k = race.karts[e.k];
-        this.fx.burst(k.x, k.y + 1, k.z, ['#ffffff', '#bde0fe'], 16, 6, 0.6, 0.5);
-        break;
-      }
     }
   }
 
@@ -730,60 +695,7 @@ export class GameView {
       return;
     }
     rig.root.updateMatrixWorld();
-    // Rubber on the road: drifting, hard braking or spinning.
-    const onRoad = k.surface === SURF.road || k.surface === SURF.boost || k.surface === SURF.slick;
-    const skidding = k.grounded && onRoad && (k.driftDir !== 0 || (k.input.brake && k.speed > 10) || (k.stun === 'spin' && Math.hypot(k.vx, k.vz) > 6));
-    rig.rearWheels.forEach((w, wi) => {
-      tmpV.copy(w).applyMatrix4(rig.body.matrixWorld);
-      this.skids.mark(`${k.index}:${wi}`, tmpV.x, k.groundY, tmpV.z, skidding, k.driftDir ? 0.32 + k.driftLevel * 0.05 : 0.4);
-    });
-    // Drift sparks from the rear wheels.
-    if (k.driftDir && k.grounded) {
-      const level = k.driftLevel;
-      const n = level === 0 ? 1 : 2 + level;
-      // A new colour pops: a burst from each rear wheel, so it is caught from the corner of the eye.
-      const popped = level > (this.sparkLevels[k.index] ?? 0);
-      for (const w of rig.rearWheels) {
-        tmpV.copy(w).applyMatrix4(rig.body.matrixWorld);
-        for (let i = 0; i < n; i++) if (Math.random() < 0.7) this.fx.spark(tmpV.x, tmpV.y + 0.15, tmpV.z, SPARK_COLORS[level], 0.6 + level * 0.25);
-        if (level === 0 && Math.random() < 0.3) this.fx.dust(tmpV.x, tmpV.y, tmpV.z, '#e8e4dc', 0.8);
-        if (popped) this.fx.burst(tmpV.x, tmpV.y + 0.3, tmpV.z, [SPARK_COLORS[level], '#ffffff'], 14 + level * 4, 7 + level * 2, 0.55, 0.35);
-      }
-    }
-    this.sparkLevels[k.index] = k.driftDir ? k.driftLevel : 0;
-    // Exhaust flames while boosting.
-    if (k.boost > 0 || k.rocket > 0) {
-      for (const ex of rig.exhausts) {
-        tmpV.copy(ex).applyMatrix4(rig.body.matrixWorld);
-        for (let i = 0; i < (k.rocket > 0 ? 3 : 2); i++) this.fx.flame(tmpV.x, tmpV.y, tmpV.z, -fwdX(k.h) * 8, -fwdZ(k.h) * 8, k.boostMul > 1.4);
-      }
-      if (k.rocket > 0) {
-        tmpV.set(0, 1.2, -2.1).applyMatrix4(rig.body.matrixWorld);
-        for (let i = 0; i < 4; i++) this.fx.flame(tmpV.x, tmpV.y, tmpV.z, -fwdX(k.h) * 14, -fwdZ(k.h) * 14, false);
-      }
-    }
-    // Slipstream building: air streams back past the kart, thicker as the boost nears.
-    if (k.draftT > 0.15) {
-      const rx = -Math.cos(h);
-      const rz = Math.sin(h);
-      for (let i = 0; i < 1 + Math.round(k.draftT * 1.5); i++) {
-        const off = (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 0.6);
-        this.fx.streak(p.x + rx * off + fwdX(h) * 1.5, p.y + 0.6 + Math.random() * 1.2, p.z + rz * off + fwdZ(h) * 1.5, -fwdX(h) * 26, -fwdZ(h) * 26);
-      }
-    }
-    // Smart steering helping: a little glint off the nose, so it is clear the kart was steered for you.
-    if (k.assistT > 0 && Math.random() < 0.5) {
-      this.fx.spark(p.x + fwdX(h) * 1.6, p.y + 1.1, p.z + fwdZ(h) * 1.6, '#7fe7ff', 0.35);
-    }
-    // Dust kicked up off-road.
-    if (k.grounded && sp > 0.25 && (k.surface === SURF.rough || k.surface === SURF.sand) && Math.random() < sp * 0.7) {
-      const c = this.dustColor();
-      this.fx.dust(p.x - fwdX(h) * 1.2, p.y, p.z - fwdZ(h) * 1.2, c, 1.1);
-    }
-    if (k.star > 0 && Math.random() < 0.6) {
-      tmpColor.setHSL(Math.random(), 1, 0.65);
-      this.fx.spark(p.x + (Math.random() - 0.5) * 2, p.y + 1 + Math.random() * 1.5, p.z + (Math.random() - 0.5) * 2, `#${tmpColor.getHexString()}`, 0.5);
-    }
+    emitKart(this.fx, this.skids, k, rig, p, h, sp, this.sparkLevels, this.track?.def.id ?? '', this.dustColor());
   }
 
   private dustColor() {
