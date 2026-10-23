@@ -57,6 +57,8 @@ export interface KartRig {
   ring: THREE.Mesh | null;
   tag: THREE.Sprite | null;
   rocket: THREE.Object3D;
+  /** The rocket's nozzle in the body's frame, where its flame comes out. */
+  nozzle: THREE.Vector3;
   /** Body materials that flash during a Sugar Rush. */
   paint: THREE.MeshStandardMaterial[];
   wheelRadius: number;
@@ -105,7 +107,9 @@ const EYE = cached('eye', () => new THREE.MeshPhysicalMaterial({ color: '#15151d
 const glow = (color: string, intensity: number) =>
   cached(`glow${color}${intensity}`, () => new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: intensity, roughness: 0.3 }));
 const HEADLIGHT = glow('#fff1cf', 4.5);
-const TAILLIGHT = glow('#ff1426', 1.8);
+// Kept under the tone mapper's knee (about 0.8 in the brightest channel, lit paint included): above it Neutral
+// fades a saturated red towards white, and the lights read pink.
+const TAILLIGHT = cached('taillight', () => new THREE.MeshStandardMaterial({ color: '#3a0004', emissive: '#ff0612', emissiveIntensity: 0.85, roughness: 0.3 }));
 const CATCH = glow('#ffffff', 1.3);
 
 /** A licence plate: the player's tag in their colour, or the driver's name on white. */
@@ -855,6 +859,8 @@ export function buildKart(character: { id: string; color: string; accent: string
   }
   const rocket = rocketBooster();
   body.add(rocket);
+  // The booster's tube ends 0.8 behind its middle.
+  const nozzle = rocket.position.clone().add(new THREE.Vector3(0, 0, -0.8));
 
   // Everything that can glow during a Sugar Rush: the baked paint and vinyl.
   const paintList: THREE.MeshStandardMaterial[] = [];
@@ -888,7 +894,7 @@ export function buildKart(character: { id: string; color: string; accent: string
 
   return {
     root, tilt, body, sprung, driver, head, steering, grips, arms, eyes, catchlights, key, seatY: parts.seatY,
-    wheels, front, exhausts: parts.exhausts, rearWheels, shield, shadow, ring, tag, rocket,
+    wheels, front, exhausts: parts.exhausts, rearWheels, shield, shadow, ring, tag, rocket, nozzle,
     paint: paintList, wheelRadius: r, anim: newKartAnim(),
   };
 }

@@ -76,7 +76,7 @@ export function emitKart(fx: Fx, skids: Skids, k: Kart, rig: KartRig, p: THREE.V
   const sliding = k.driftDir !== 0 || (k.input.brake && k.speed > 10) || (k.stun === 'spin' && Math.hypot(k.vx, k.vz) > 6);
   const skidding = k.grounded && sliding && (onRoad || (offRoad && k.driftDir !== 0));
   for (let w = 0; w < 2; w++) {
-    skids.mark(`${k.index}:${w}`, wheels[w].x, k.groundY, wheels[w].z, skidding, onRoad ? (k.driftDir ? 0.42 + k.driftLevel * 0.06 : 0.5) : 0.3, onRoad ? 0 : 1);
+    skids.mark(k.index * 2 + w, wheels[w].x, k.groundY, wheels[w].z, skidding, onRoad ? (k.driftDir ? 0.42 + k.driftLevel * 0.06 : 0.5) : 0.3, onRoad ? 0 : 1);
   }
 
   // Drift: sparks in the charge's colour, a glow at each tyre, smoke off the road.
@@ -136,10 +136,10 @@ export function emitKart(fx: Fx, skids: Skids, k: Kart, rig: KartRig, p: THREE.V
       if (rate(18 + strength * 20, dt)) fx.emit(P.ember, tmpV.x, tmpV.y, tmpV.z, k.vx * 0.6 - fx_ * 6 + rnd(1.5), 0.5 + Math.random(), k.vz * 0.6 - fz * 6 + rnd(1.5), color, 4);
     }
     if (k.rocket > 0) {
-      tmpS.makeScale(0.42, 0.42, 2.6 * flick).setPosition(0, 1.2, -2.1);
+      tmpS.makeScale(0.42, 0.42, 2.6 * flick).setPosition(rig.nozzle);
       tmpM.multiplyMatrices(rig.body.matrixWorld, tmpS);
       fx.flame(tmpM, ROCKET, 3.4);
-      tmpV.set(0, 1.2, -3).applyMatrix4(rig.body.matrixWorld);
+      tmpV.copy(rig.nozzle).setZ(rig.nozzle.z - 0.9).applyMatrix4(rig.body.matrixWorld);
       const n = rate(26, dt);
       for (let i = 0; i < n; i++) fx.emit(P.smoke, tmpV.x + rnd(0.3), tmpV.y + rnd(0.3), tmpV.z + rnd(0.3), rnd(1), 0.6 + Math.random(), rnd(1), ROCKET_SMOKE, 1.1, 0.8, 1);
     }

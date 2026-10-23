@@ -1,9 +1,10 @@
 /**
  * What items look like in the world: item boxes, bouncy balls, seeker bees,
  * pop bombs, paper jets, oil slicks, blasts, and the Giant's Hand reaching in.
- * Everything that flies leaves a trail. Models are pooled by id so nothing is
- * built or thrown away mid-race except when something new appears, and their
- * geometry and materials are shared between copies.
+ * Everything that flies leaves a trail. Models are pooled: one whose item has
+ * gone waits for the next, so nothing is built or thrown away mid-race except
+ * when more are out at once than before, and their geometry and materials are
+ * shared between copies where they can be.
  */
 import * as THREE from 'three';
 import { PLAYER_COLORS } from '@raceoff/shared';
@@ -300,8 +301,13 @@ interface Pooled {
   seen: boolean;
 }
 
-class Pool {
+export class Pool {
   private live = new Map<number, Pooled>();
+  /**
+   * Models whose item has gone, put away for the next one. Disposing them would free their shader programs
+   * with the last material using them, and the next bomb or blast would stall the race compiling them again.
+   */
+  private spare: THREE.Object3D[] = [];
   constructor(
     private parent: THREE.Object3D,
     private make: () => THREE.Object3D,
@@ -314,8 +320,17 @@ class Pool {
   get(id: number): THREE.Object3D {
     let p = this.live.get(id);
     if (!p) {
-      const obj = this.make();
-      this.parent.add(obj);
+      let obj = this.spare.pop();
+      if (obj) {
+        obj.visible = true;
+        // Its trails start afresh, not from where the last item was.
+        delete obj.userData.last;
+        delete obj.userData.left;
+        delete obj.userData.right;
+      } else {
+        obj = this.make();
+        this.parent.add(obj);
+      }
       p = { obj, seen: true };
       this.live.set(id, p);
     }
@@ -326,18 +341,20 @@ class Pool {
   end() {
     for (const [id, p] of this.live) {
       if (p.seen) continue;
-      this.parent.remove(p.obj);
-      disposeTree(p.obj);
+      p.obj.visible = false;
+      this.spare.push(p.obj);
       this.live.delete(id);
     }
   }
 
   clear() {
-    for (const p of this.live.values()) {
-      this.parent.remove(p.obj);
-      disposeTree(p.obj);
+    for (const p of this.live.values()) this.spare.push(p.obj);
+    for (const obj of this.spare) {
+      this.parent.remove(obj);
+      disposeTree(obj);
     }
     this.live.clear();
+    this.spare.length = 0;
   }
 }
 
@@ -402,6 +419,9 @@ export class ItemsView {
         const o = this.bombs.get(p.id);
         o.position.set(x, y - 1.1, z);
         o.rotation.x += dt * 6;
+        // It may be the model of a bomb that sat flashing on the road.
+        o.scale.setScalar(1);
+        (o.userData.body as THREE.MeshPhysicalMaterial).emissiveIntensity = 0;
         fuse(fx, o, dt);
         trail(fx, o, x, y, z, P.trail, FUSE[2], 1.2, 0.9, 0.6);
       } else if (p.kind === 'plane') {
