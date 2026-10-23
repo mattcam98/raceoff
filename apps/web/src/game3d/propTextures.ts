@@ -12,11 +12,12 @@ export type Paint = (g: CanvasRenderingContext2D, w: number, h: number) => void;
 export const FONT = '"Bricolage Grotesque Variable", "Figtree Variable", system-ui, sans-serif';
 export const BODY = '"Figtree Variable", system-ui, sans-serif';
 
-function canvas(w: number, h: number) {
+/** `read`: the canvas is read back, so keep it in memory: reading a GPU canvas stalls on everything the GPU is doing. */
+function canvas(w: number, h: number, read = false) {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
-  return { c, g: c.getContext('2d')! };
+  return { c, g: c.getContext('2d', { willReadFrequently: read })! };
 }
 
 function finish(c: HTMLCanvasElement, o: { repeat?: boolean; srgb?: boolean }) {
@@ -47,7 +48,7 @@ export function painted(key: string, w: number, h: number, paint: Paint, repeat 
 export function bumps(key: string, w: number, h: number, paint: Paint, strength = 2, repeat = true): THREE.Texture {
   let t = cache.get(key);
   if (!t) {
-    const { c, g } = canvas(w, h);
+    const { c, g } = canvas(w, h, true);
     g.fillStyle = '#808080';
     g.fillRect(0, 0, w, h);
     paint(g, w, h);
