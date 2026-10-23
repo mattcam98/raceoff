@@ -307,7 +307,8 @@ export const THEMES: Record<string, Theme> = {
         const x = Math.cos(a) * d;
         const z = Math.sin(a) * d;
         if (x > b.minX - 30 && x < b.maxX + 30 && z > b.minZ - 30 && z < b.maxZ + 30) continue;
-        const flower = i % 4 === 0;
+        // Flower clumps are rich (about ten thousand triangles), so only a few; grass tufts are cheap.
+        const flower = i % 12 === 0;
         g.add(at(buildProp(flower ? 'flowers' : 'grass', flower ? colors[i % colors.length] : undefined), x, 0, z, 0, r() * 6, 0));
       }
       return g;

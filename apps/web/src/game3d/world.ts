@@ -285,7 +285,7 @@ function wallKind(style: string): WallKind {
     case 'tire': {
       const t = treadTexture();
       const m = std({ roughness: 0.85, normalMap: bumpFrom(t, 4, false, 1) });
-      return { layers: [{ geo: new THREE.TorusGeometry(1.15, 0.6, 12, 28).rotateX(Math.PI / 2).translate(0, 0.6, 0), material: m, tint: true }], spacing: 3.4, colors: ['#26272e', '#1d1e24', '#ffd23f'], along: false, jitter: 0, stack: 2 };
+      return { layers: [{ geo: new THREE.TorusGeometry(1.15, 0.6, 7, 14).rotateX(Math.PI / 2).translate(0, 0.6, 0), material: m, tint: true }], spacing: 3.4, colors: ['#26272e', '#1d1e24', '#ffd23f'], along: false, jitter: 0, stack: 2 };
     }
     case 'soap':
       return { layers: [{ geo: new THREE.CapsuleGeometry(0.9, 1.6, 6, 16).rotateZ(Math.PI / 2).translate(0, 0.9, 0), material: new THREE.MeshPhysicalMaterial({ roughness: 0.3, clearcoat: 0.7, clearcoatRoughness: 0.2 }), tint: true }], spacing: 3.6, colors: ['#ffb3c6', '#bde0fe', '#caffbf', '#fdffb6', '#ffd6a5'], along: true, jitter: 0.1 };
@@ -329,31 +329,38 @@ function walls(track: Track, style: string): THREE.Object3D {
     }
   }
   const stack = kind.stack ?? 1;
-  const layers = kind.layers.map((l) => new THREE.InstancedMesh(l.geo, l.material, spots.length * stack));
-  let k = 0;
+  const g = new THREE.Group();
+  // Short runs of wall, each its own instanced mesh, so the camera skips the ones out of view.
+  const RUN = 40;
   let seed = 1;
   const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  spots.forEach((s, i) => {
-    for (let j = 0; j < stack; j++) {
-      const yaw = (kind.along ? s.h : r() * Math.PI) + (r() - 0.5) * kind.jitter;
-      tmpQ.setFromAxisAngle(UP, yaw);
-      tmpP.set(s.x, s.y + j * 1.2, s.z);
-      tmpS.set(1, 1, 1);
-      tmpM.compose(tmpP, tmpQ, tmpS);
-      const color = j === stack - 1 && style === 'tire' && i % 4 === 0 ? kind.colors[2] : kind.colors[(i + j) % (style === 'tire' ? 2 : kind.colors.length)];
-      layers.forEach((inst, li) => {
-        inst.setMatrixAt(k, tmpM);
-        if (kind.layers[li].tint) inst.setColorAt(k, tmpC.set(color));
-      });
-      k++;
+  for (let start = 0; start < spots.length; start += RUN) {
+    const run = spots.slice(start, start + RUN);
+    const layers = kind.layers.map((l) => new THREE.InstancedMesh(l.geo, l.material, run.length * stack));
+    let k = 0;
+    run.forEach((s, ri) => {
+      const i = start + ri;
+      for (let j = 0; j < stack; j++) {
+        const yaw = (kind.along ? s.h : r() * Math.PI) + (r() - 0.5) * kind.jitter;
+        tmpQ.setFromAxisAngle(UP, yaw);
+        tmpP.set(s.x, s.y + j * 1.2, s.z);
+        tmpS.set(1, 1, 1);
+        tmpM.compose(tmpP, tmpQ, tmpS);
+        const color = j === stack - 1 && style === 'tire' && i % 4 === 0 ? kind.colors[2] : kind.colors[(i + j) % (style === 'tire' ? 2 : kind.colors.length)];
+        layers.forEach((inst, li) => {
+          inst.setMatrixAt(k, tmpM);
+          if (kind.layers[li].tint) inst.setColorAt(k, tmpC.set(color));
+        });
+        k++;
+      }
+    });
+    for (const inst of layers) {
+      inst.computeBoundingSphere();
+      inst.castShadow = true;
+      inst.receiveShadow = true;
+      inst.userData.dynamic = true;
+      g.add(inst);
     }
-  });
-  const g = new THREE.Group();
-  for (const inst of layers) {
-    inst.castShadow = true;
-    inst.receiveShadow = true;
-    inst.userData.dynamic = true;
-    g.add(inst);
   }
   // Extra walls are a simple low barrier.
   for (const w of track.walls) {
@@ -709,7 +716,6 @@ export function buildWorld(track: Track): World {
     m.receiveShadow = true;
     stat.add(m);
   }
-  stat.add(theme.backdrop(track, theme));
 
   for (const p of track.paths) {
     stat.add(roadMesh(track, p, theme));
@@ -777,8 +783,15 @@ export function buildWorld(track: Track): World {
 
   const group = new THREE.Group();
   const baked = bake(stat, 'static');
-  baked.traverse((o) => (o.userData.static = true));
-  group.add(baked);
+  // The room lies outside the sun's shadow map, so its shadows would never show: it does not cast, and it is
+  // merged on its own so the track's meshes are not drawn into the shadow map along with it.
+  const backdrop = theme.backdrop(track, theme);
+  backdrop.traverse((o) => (o.castShadow = false));
+  const room = bake(backdrop, 'room');
+  for (const g of [baked, room]) {
+    g.traverse((o) => (o.userData.static = true));
+    group.add(g);
+  }
   group.add(dyn);
 
   let disposed = false;
