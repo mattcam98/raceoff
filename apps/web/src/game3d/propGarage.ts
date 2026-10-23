@@ -229,15 +229,18 @@ export const garage: Record<string, Builder> = {
     return g;
   },
 
-  /** Traffic cone, 9.2 tall on a 5.2 square rubber base; its reflective bands glow faintly at night. */
+  /**
+   * Traffic cone, 9.2 tall on a 4.6 square rubber base; its reflective bands glow faintly at night. The base is
+   * well rounded so its corners stay near the 2.2 footprint: a sharp 5.2 base had karts sink into its corners.
+   */
   cone: () => {
     const r = (y: number) => 2.05 - (y - 0.7) * (1.6 / 8.3);
     const part = (y0: number, y1: number, m: THREE.Material, e = 0) => turn([[r(y0) + e, y0], [r(y1) + e, y1]], m, 32);
     const orange = glaze('#ff5f0f');
     const band = glow('#e8eef5', 0.22);
     return group(
-      rbox(5.2, 0.7, 5.2, 0.7, rubber('#1d1d22')),
-      turn([[2.45, 0.7], [2.3, 0.95], [r(0.95), 0.95]], orange, 32),
+      extrude(roundRect(4.6, 4.6, 1.1) as THREE.Shape, 0.7, 0.15, rubber('#1d1d22'), { lie: true, curve: 4, bevelSegs: 2 }),
+      turn([[2.3, 0.7], [2.2, 0.95], [r(0.95), 0.95]], orange, 32),
       part(0.95, 2.9, orange),
       part(2.9, 4.5, band, 0.02),
       part(4.5, 5.6, orange),
