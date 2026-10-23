@@ -250,7 +250,8 @@ export async function createApp(config: Config): Promise<App> {
 
   // The built web app, with every other path falling through to it so client routes work on reload.
   const here = dirname(fileURLToPath(import.meta.url));
-  const webDir = [config.WEB_DIR, resolve(here, '../../web/dist'), resolve(process.cwd(), 'apps/web/dist')].find((d) => d && existsSync(join(d, 'index.html')));
+  // Resolved: res.sendFile refuses a relative path, so WEB_DIR=apps/web/dist answered every page with a 500.
+  const webDir = [config.WEB_DIR && resolve(config.WEB_DIR), resolve(here, '../../web/dist'), resolve(process.cwd(), 'apps/web/dist')].find((d) => d && existsSync(join(d, 'index.html')));
   if (webDir) {
     // Vite fingerprints everything under assets/, so those never change; the rest is checked hourly.
     const assets = join(webDir, 'assets') + sep;
