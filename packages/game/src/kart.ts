@@ -120,6 +120,10 @@ const AUTO_DRIFT = { hold: 0.2, steer: 0.7, speed: 0.5, keep: 0.2 };
  * quick enough (wide to tight in a quarter of a second) that correcting a drift answers the thumb.
  */
 const DRIFT_TURN_EASE = 5;
+/** Rising faster than this (m/s) as the ground drops away is a launch: a trick is possible. */
+const LAUNCH_VY = 3.5;
+/** How long before the lip a DRIFT press still counts as a trick: about the phone's delay plus a few frames. */
+const TRICK_EARLY = 0.15;
 /** Sideways grip in a drift, and how much of the speed it lets slide outward. */
 const DRIFT_GRIP = 13;
 const DRIFT_SLIDE = 0.07;
@@ -150,6 +154,8 @@ export class Kart {
   launched = false;
   trick = 0;
   trickDone = false;
+  /** Seconds a DRIFT press made on a ramp's climb still counts as a trick, if the kart launches meanwhile. */
+  trickT = 0;
   surface: Surface = SURF.road;
   groundY = 0;
   /** Ground slope under the kart (for the renderer's tilt). */
@@ -330,7 +336,8 @@ export interface StepEvents {
   wall: (k: Kart, strength: number) => void;
   boost: (k: Kart, kind: 'drift' | 'pad' | 'trick' | 'start', level: number) => void;
   land: (k: Kart, hard: boolean) => void;
-  drift: (k: Kart, on: boolean) => void;
+  /** `lost`: a drift with sparks ended without cashing them in (knocked, hit, slowed right down). */
+  drift: (k: Kart, on: boolean, lost?: boolean) => void;
   fall: (k: Kart, water: boolean) => void;
 }
 
@@ -389,7 +396,13 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
   if (driftPressed && !k.driftDir) k.driftArmed = true;
   if (!inp.drift) k.driftArmed = false;
   const fwdSpeed = k.speed;
-  if (controlled && k.grounded && k.driftArmed && fwdSpeed > 9 && !k.driftDir && k.rocket === 0) {
+  // On a ramp's climb (the ground rising as fast as a launch) a press does not hop: a hop there flattens the jump
+  // to a hop's height and loses the trick. It is kept as a trick if the kart takes off soon, as a press a moment
+  // before the lip is meant to be, and still hops into a drift on landing if held.
+  if (k.trickT > 0) k.trickT = Math.max(0, k.trickT - dt);
+  const climbing = k.grounded && k.vy > LAUNCH_VY;
+  if (driftPressed && climbing) k.trickT = TRICK_EARLY;
+  if (controlled && k.grounded && k.driftArmed && fwdSpeed > 9 && !k.driftDir && k.rocket === 0 && !climbing) {
     k.driftArmed = false;
     // A little hop; the direction is chosen by the steering during it.
     k.vy = 5.5;
@@ -398,7 +411,7 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
     k.driftWanted = true;
   }
   if (!controlled || fwdSpeed < 6 || k.rocket > 0) {
-    if (k.driftDir) ev.drift(k, false);
+    if (k.driftDir) ev.drift(k, false, k.driftLevel > 0);
     k.stopDrift();
   }
   if (k.driftWanted && !inp.drift) k.driftWanted = false;
@@ -564,7 +577,9 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
   // A ledge too tall to drive up is a wall, and is bounced off like one: a glancing scrape slides along its face
   // and keeps most of the speed; only driving straight at it stops the kart.
   const tooTall = (x: number, z: number) => track.grid.heightAt(x, z, track.voidY) > k.y + 1.1;
-  if (k.grounded && tooTall(nx, nz)) {
+  // In the air too: coming down below the top of a step and crossing its edge is a hit on its face, not a lift up
+  // it (a jump short of a gap's far bank used to be hoisted metres onto it). Steps under 1.1 m are still forgiven.
+  if (tooTall(nx, nz)) {
     // The face's outward normal: downhill across the step.
     const e = 0.6;
     const gx = track.grid.heightAt(nx + e, nz, track.voidY) - track.grid.heightAt(nx - e, nz, track.voidY);
@@ -595,9 +610,11 @@ export function stepKart(k: Kart, track: Track, dt: number, ev: StepEvents, auto
     if (g < yFree - 0.15) {
       // The ground fell away faster than gravity: we are airborne (a ramp lip, a ledge, a gap).
       k.grounded = false;
-      k.launched = k.vy > 3.5;
-      k.trick = 0;
-      k.trickDone = false;
+      k.launched = k.vy > LAUNCH_VY;
+      // DRIFT pressed just before the lip: the trick is already in.
+      k.trick = k.launched && k.trickT > 0 && controlled ? 1 : 0;
+      k.trickDone = k.trick === 1;
+      k.trickT = 0;
       k.airTime = 0;
       k.y = yFree;
     } else {
@@ -754,7 +771,10 @@ function bounce(k: Kart, nx: number, nz: number, ev: StepEvents) {
     if (Math.abs(diff) < Math.PI / 2) k.h = wrapAngle(k.h + diff * 0.35);
   }
   // A scrape keeps the drift going; only a real knock ends it.
-  if (strength > 8 && headOn > 0.35 && k.driftDir) k.stopDrift();
+  if (strength > 8 && headOn > 0.35 && k.driftDir) {
+    ev.drift(k, false, k.driftLevel > 0);
+    k.stopDrift();
+  }
   if (strength > 4 && k.bumpT === 0) {
     k.bumpT = 0.25;
     ev.wall(k, strength);

@@ -708,3 +708,142 @@ describe('the race end, with giants', () => {
     expect(race.over).toBe(true);
   });
 });
+
+describe('ramps', () => {
+  const human = (): RacerSpec[] => [{ id: 'p', name: 'P', character: CHARACTERS[0].id, body: BODIES[0].id, cpu: false, slot: 0 }];
+
+  /**
+   * Drive at a main-road ramp at `share` of top speed, holding it, tapping DRIFT for 4 steps from step `tapAt`.
+   * Returns the step it left the lip on, its time in the air, whether it tricked or fell, and the biggest lift
+   * onto the ground at a landing.
+   */
+  function jump(trackId: string, ramp: number, share: number, tapAt: number | null) {
+    const track = getTrack(trackId);
+    const r = track.ramps[ramp];
+    const race = new Race({ track, racers: human(), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed: 1 });
+    while (race.time < 0) race.step([NO_INPUT]);
+    const k = race.karts[0];
+    const p = track.pointAt(r.s0 - 25, 0);
+    k.place3(p.x, p.y, p.z, p.h);
+    k.s = k.dist = p.s;
+    const v = k.params.maxSpeed * share;
+    k.vx = Math.sin(p.h) * v;
+    k.vz = Math.cos(p.h) * v;
+    let launch = -1, air = 0, trick = false, fell = false, lift = 0;
+    for (let i = 0; i < 200 && !fell; i++) {
+      const wasGrounded = k.grounded;
+      const y0 = k.y;
+      race.step([{ ...NO_INPUT, gas: k.speed < v, drift: tapAt !== null && i >= tapAt && i < tapAt + 4 }]);
+      if (wasGrounded && !k.grounded && !k.hopping && launch < 0) launch = i;
+      if (!k.grounded) air += STEP;
+      if (!wasGrounded && k.grounded) lift = Math.max(lift, k.y - y0);
+      for (const e of race.events) {
+        if (e.t === 'boost' && e.kind === 'trick') trick = true;
+        if (e.t === 'fall') fell = true;
+      }
+      race.events.length = 0;
+    }
+    return { launch, air, trick, fell, lift };
+  }
+
+  const mainRamps = TRACKS.flatMap((t) => getTrack(t.id).ramps.map((r, i) => ({ id: t.id, i, r })).filter((x) => x.r.path === 0));
+
+  it('counts a DRIFT press a moment before the lip as a trick, without flattening the jump', () => {
+    expect(mainRamps.length).toBeGreaterThan(0);
+    for (const { id, i } of mainRamps) {
+      const flat = jump(id, i, 1, null);
+      expect(flat.launch, `${id} launches`).toBeGreaterThan(0);
+      // With the phone's delay, a press "at the lip" lands a few steps either side of it.
+      for (const early of [6, 3, 1]) {
+        const j = jump(id, i, 1, flat.launch - early);
+        expect(j.trick, `${id} tap ${early} steps early`).toBe(true);
+        expect(Math.abs(j.air - flat.air), `${id} tap ${early} steps early: air time`).toBeLessThan(0.05);
+      }
+      expect(jump(id, i, 1, flat.launch + 5).trick, `${id} tap in the air`).toBe(true);
+    }
+  });
+
+  it('never lifts a kart up a face it comes down beside: a jump too slow for the gap falls in', () => {
+    const gaps = mainRamps.filter((x) => x.r.gap > 0);
+    expect(gaps.length).toBeGreaterThan(0);
+    let shortFalls = 0;
+    for (const { id, i } of gaps) {
+      expect(jump(id, i, 1, null).fell, `${id} flat out clears`).toBe(false);
+      for (const share of [0.7, 0.55, 0.4]) {
+        const j = jump(id, i, share, null);
+        expect(j.lift, `${id} at ${share} of top speed`).toBeLessThan(1.1);
+        if (j.fell) shortFalls++;
+      }
+    }
+    expect(shortFalls).toBeGreaterThan(0);
+  });
+});
+
+describe('finished racers', () => {
+  it('cruise home along the road: no falls, no grass, no item boxes taken from those still racing', () => {
+    for (const t of TRACKS) {
+      const racers: RacerSpec[] = [{ ...cpus(1)[0], id: 'p1', cpu: false, slot: 0 }, ...cpus(4).slice(1)];
+      const race = new Race({ track: getTrack(t.id), racers, laps: 3, cc: 100, items: 'normal', difficulty: 'normal', seed: 3, giantTime: 30 });
+      while (race.time < 1) race.step([NO_INPUT]);
+      const k = race.karts[0];
+      k.finished = true;
+      k.finishTime = race.time;
+      let off = 0;
+      for (let i = 0; i < 15 / STEP; i++) {
+        race.step([NO_INPUT]);
+        for (const e of race.events) {
+          expect(e.t === 'fall' && e.k === 0, `${t.id} fell`).toBe(false);
+          expect(e.t === 'box' && e.k === 0, `${t.id} took a box`).toBe(false);
+        }
+        race.events.length = 0;
+        // On the ground: flying a ramp's gap is over the void, and fine.
+        if (k.grounded && (k.surface === SURF.rough || k.surface === SURF.void || k.surface === SURF.water)) off++;
+      }
+      expect(off * STEP, `${t.id} seconds off the road`).toBeLessThan(0.5);
+      // Driven home, not parked: it covered a good part of the lap.
+      expect(k.dist, t.id).toBeGreaterThan(150);
+    }
+  });
+});
+
+describe('a lost drift', () => {
+  /** One human on Breakfast's start straight, holding a drift until it has sparks. */
+  function sparking() {
+    const race = new Race({ track: getTrack('breakfast'), racers: cpus(1).map((r) => ({ ...r, cpu: false, slot: 0 })), laps: 3, cc: 100, items: 'off', difficulty: 'normal', seed: 1 });
+    while (race.time < 0) race.step([NO_INPUT]);
+    for (let i = 0; i < 90; i++) race.step([{ ...NO_INPUT, gas: true }]);
+    for (let i = 0; i < 80; i++) race.step([{ ...NO_INPUT, gas: true, drift: true, steer: 1 }]);
+    expect(race.karts[0].driftLevel).toBeGreaterThanOrEqual(1);
+    race.events.length = 0;
+    return race;
+  }
+
+  it('says so when a hit throws its sparks away', () => {
+    const race = sparking();
+    expect(race.hit(race.karts[0], 'spin', 'ball', -1)).toBe('hit');
+    expect(race.events).toContainEqual({ t: 'drift', k: 0, on: false, lost: true });
+  });
+
+  it('does not call cashing it in a loss', () => {
+    const race = sparking();
+    race.step([{ ...NO_INPUT, gas: true }]);
+    const off = race.events.find((e) => e.t === 'drift');
+    expect(off).toEqual({ t: 'drift', k: 0, on: false });
+    expect(race.events.some((e) => e.t === 'boost' && e.kind === 'drift')).toBe(true);
+  });
+
+  it('says so when a wall knock ends it', () => {
+    const k = new Kart(0, 'p', CHARACTERS[0].id, BODIES[0].id, false, 1);
+    k.place3(-KART_RADIUS + 0.2, 0, 0, 0.8);
+    k.vx = Math.sin(0.8) * 30;
+    k.vz = Math.cos(0.8) * 30;
+    k.driftDir = 1;
+    k.driftCharge = DRIFT_LEVELS[1];
+    const got: [boolean, boolean | undefined][] = [];
+    const wall = { t: 'seg', ax: 0, az: -100, bx: 0, bz: 100, r: 0 } as Collider;
+    const track = { query: (_x: number, _z: number, _r: number, out: Collider[]) => ((out.length = 1), (out[0] = wall), out) } as unknown as Parameters<typeof collideStatic>[1];
+    collideStatic(k, track, { wall() {}, boost() {}, land() {}, drift: (_k, on, lost) => got.push([on, lost]), fall() {} });
+    expect(k.driftDir).toBe(0);
+    expect(got).toEqual([[false, true]]);
+  });
+});

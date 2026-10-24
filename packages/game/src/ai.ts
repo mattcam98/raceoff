@@ -8,7 +8,7 @@
 import type { ItemId } from '@raceoff/shared';
 import { hazardAt } from './hazards';
 import { GIANT_BLAST_RADIUS, OIL_RADIUS } from './items';
-import { DRIFT_LEVELS, DRIFT_TURN, KART_RADIUS, NO_INPUT, STEER_FALLOFF, type Kart, type KartInput } from './kart';
+import { DRIFT_TURN, KART_RADIUS, NO_INPUT, STEER_FALLOFF, type Kart, type KartInput } from './kart';
 import { clamp, damp, fwdX, fwdZ, headingOf, rightX, rightZ, wrapAngle, type Rng } from './math';
 import type { Race } from './race';
 import type { TrackPath } from './track/build';
@@ -37,8 +37,11 @@ export interface Skill {
   awareness: number;
 }
 
+/** Slowing assumed when judging braking points (m/s per second): lifting off sheds about 10, braking 42. */
+const AI_COAST = 16;
+
 export const SKILLS: Record<Difficulty, Skill> = {
-  easy: { speed: 0.84, bravery: 0.92, wobble: 0.16, drift: 0.25, driftLevel: 1, react: 1.6, start: 0.15, bandDown: 0.18, bandUp: 0.08, awareness: 0.35 },
+  easy: { speed: 0.84, bravery: 0.92, wobble: 0.16, drift: 0.25, driftLevel: 1, react: 1.6, start: 0.15, bandDown: 0.18, bandUp: 0.14, awareness: 0.35 },
   normal: { speed: 0.93, bravery: 1.0, wobble: 0.08, drift: 0.65, driftLevel: 2, react: 0.9, start: 0.45, bandDown: 0.13, bandUp: 0.12, awareness: 0.7 },
   hard: { speed: 0.995, bravery: 1.06, wobble: 0.03, drift: 0.95, driftLevel: 2, react: 0.45, start: 0.75, bandDown: 0.08, bandUp: 0.16, awareness: 0.95 },
 };
@@ -158,7 +161,12 @@ export class AiDriver {
   private curvatureAt(i: number) {
     const K = this.path.lineK;
     if (this.path.closed) return K[((i % K.length) + K.length) % K.length];
-    return K[clamp(i, 0, K.length - 1)];
+    if (i < K.length) return K[Math.max(0, i)];
+    // Past a shortcut's end, the bend ahead is on the main road it rejoins: a kart judging the corner just after
+    // the exit by the shortcut's own last stretch came out too fast and met the outside wall.
+    const main = this.race.track.paths[0];
+    const j = Math.round(this.path.sTo / (this.race.track.length / main.samples.length)) + (i - K.length + 1);
+    return main.lineK[((j % main.lineK.length) + main.lineK.length) % main.lineK.length];
   }
 
   decide(dt: number): KartInput {
@@ -186,7 +194,14 @@ export class AiDriver {
     const look = Math.round(6 + speed * 0.42);
     const t = this.sample(this.idx + look);
     const halfRoom = Math.max(0, t.w / 2 - KART_RADIUS - 1.2);
-    let off = clamp(this.lineAt(this.idx + look) + this.lane + this.dodge, -halfRoom, halfRoom);
+    // Aiming straight at a point round a bend cuts inside the arc by look² × curvature / 8 halfway there: keep that
+    // much further off the inside wall (the side the bend turns to), or a kart on the inside of the line scrapes it
+    // all round the bend.
+    const mid = this.sample(this.idx + (look >> 1));
+    const sag = Math.min(3, (look * look * this.curvatureAt(this.idx + (look >> 1))) / 8);
+    const lo = -halfRoom + (mid.k < 0 ? sag : 0);
+    const hi = halfRoom - (mid.k > 0 ? sag : 0);
+    let off = clamp(this.lineAt(this.idx + look) + this.lane + this.dodge, Math.min(lo, hi), hi);
     let tx = t.x + rightX(t.h) * off;
     let tz = t.z + rightZ(t.h) * off;
     // Never aim at water or a drop: fall back to the racing line itself.
@@ -219,15 +234,24 @@ export class AiDriver {
     const wobble = Math.sin(this.wobblePhase) * Math.sin(this.wobblePhase * 0.37) * this.skill.wobble;
     let steer = clamp(-err * 2.6 + wobble, -1, 1);
 
-    // Corner speed: the turn rate this kart has over the bend ahead.
-    let kAhead = 0;
-    for (let j = 0; j < Math.max(8, speed * 0.6); j += 2) kAhead = Math.max(kAhead, this.curvatureAt(this.idx + j));
-    // A drift turns well past full lock (DRIFT_TURN.tight), and keeps its speed doing it. Steering softens as speed
-    // builds, so the fastest a bend can be taken solves v * curvature = turn * (1 - falloff * v / top).
+    // Corner speed: the turn rate this kart has over the bend ahead. A drift turns well past full lock
+    // (DRIFT_TURN.tight), and keeps its speed doing it. Steering softens as speed builds, so the fastest a bend can
+    // be taken solves v * curvature = turn * (1 - falloff * v / top).
     const drifting = k.driftDir !== 0;
     const turn = k.params.turn * 0.92 * (drifting ? DRIFT_TURN.tight : 1);
     const falloff = (drifting ? STEER_FALLOFF.drift : STEER_FALLOFF.grip) / k.params.maxSpeed;
-    const corner = kAhead > 1e-4 ? (turn / (kAhead + turn * falloff)) * this.skill.bravery * (race.track.def.aiCornerGrip ?? 1) : Infinity;
+    const cornerGrip = this.skill.bravery * (race.track.def.aiCornerGrip ?? 1);
+    // Within 0.6 s the bend's own speed applies; beyond, only what lifting off could not shed in the distance
+    // left. Looking only 0.6 s ahead, a fast kart (150cc, or boosting) reached a tight bend too fast to slow in time.
+    const near = Math.max(8, speed * 0.6);
+    const reach = near + (speed * speed) / (2 * AI_COAST);
+    let corner = Infinity;
+    for (let j = 0; j < reach; j += 2) {
+      const c = this.curvatureAt(this.idx + j);
+      if (c < 1e-4) continue;
+      const v = (turn / (c + turn * falloff)) * cornerGrip;
+      corner = Math.min(corner, j < near ? v : Math.sqrt(v * v + 2 * AI_COAST * (j - near)));
+    }
     let gas = true;
     let brake = false;
     if (speed > corner * 1.06) gas = false;
@@ -244,6 +268,8 @@ export class AiDriver {
     // stopped never looks clear), it commits. The wait outlasts the 3 to 3.5 s a roller can sit in one lane:
     // committing after 2 s drove into rollers still dwelling at the end of their sweep.
     let waiting = false;
+    // Stopped where the hazard will still sweep over it: back off rather than sit in its path.
+    let backOff = false;
     this.waitT = Math.max(-1.5, this.waitT - dt);
     // Once it has started waiting it keeps watching: a lapse of attention mid-wait floored it into the path.
     const watching = this.waitT > -1.5 || this.rand() < this.skill.awareness + 0.2;
@@ -252,6 +278,7 @@ export class AiDriver {
       if (plan === 'go') ((gas = true), (brake = false));
       else if (plan === 'hold') ((gas = false), (waiting = true));
       else if (plan === 'wait') ((gas = false), (brake = true), (waiting = true));
+      else if (plan === 'back') ((gas = false), (brake = true), (waiting = true), (backOff = true));
       if (waiting) this.waitT += dt * 2;
       if (this.waitT >= 4) this.waitT = 5.5;
     }
@@ -270,7 +297,6 @@ export class AiDriver {
       // A drift always turns into the bend: turned in too far, the only way to straighten is to let go.
       this.overT = want * k.driftDir < -0.35 ? this.overT + dt : 0;
       drift = !(opening && (level >= this.skill.driftLevel || this.driftHold > 1.6)) && !wrongWay && this.driftHold < 3.5 && this.overT < 0.12;
-      if (k.driftCharge > DRIFT_LEVELS[Math.min(2, this.skill.driftLevel)] + 0.1 && opening) drift = false;
       // In a drift the steering trims the line: into the drift tightens it.
       steer = clamp(-err * 3, -1, 1);
     } else {
@@ -303,7 +329,7 @@ export class AiDriver {
     }
 
     const { item, back } = this.thinkItem(dt);
-    return { steer, gas: gas || (speed < 8 && !waiting), brake: brake && (speed > 0.5 || !waiting), drift, back, item };
+    return { steer, gas: gas || (speed < 8 && !waiting), brake: brake && (speed > 0.5 || !waiting || backOff), drift, back, item };
   }
 
   /** Will a moving hazard be in our way when we reach it? */
@@ -332,15 +358,15 @@ export class AiDriver {
   /**
    * Rollers, trains and tops: will one be where the kart is within the next 0.9 s? 'clear' if neither
    * holding this speed nor flooring it meets one, 'go' if only flooring it gets through first, 'hold' if only
-   * holding this speed does, 'wait' if only stopping short does.
+   * holding this speed does, 'wait' if only stopping short does, 'back' if stopped within its reach.
    */
-  private movingHazard(speed: number): 'clear' | 'go' | 'hold' | 'wait' {
+  private movingHazard(speed: number): 'clear' | 'go' | 'hold' | 'wait' | 'back' {
     const race = this.race;
     const k = this.kart;
     const fx = fwdX(k.h);
     const fz = fwdZ(k.h);
     const top = k.params.maxSpeed * k.speedMul;
-    const meets = (floor: boolean) => {
+    const meets = (floor: boolean, margin = 0.4) => {
       for (const h of race.hazards) {
         if (h.def.kind === 'stomper') continue;
         let v = speed;
@@ -351,13 +377,15 @@ export class AiDriver {
           d += v * 0.15;
           const x = k.x + fx * d;
           const z = k.z + fz * d;
-          for (const b of hazardAt(h.def, race.time + t).bodies) if (Math.hypot(b.x - x, b.z - z) < b.r + KART_RADIUS + 0.4) return true;
+          for (const b of hazardAt(h.def, race.time + t).bodies) if (Math.hypot(b.x - x, b.z - z) < b.r + KART_RADIUS + margin) return true;
         }
       }
       return false;
     };
     const now = meets(false);
     const floored = meets(true);
+    // Stopped, but still where it sweeps by (it stopped late, or the sweep reaches further than it looked): back off.
+    if (speed < 2 && floored && meets(false, 1.2)) return 'back';
     return !floored ? (now ? 'go' : 'clear') : now ? 'wait' : 'hold';
   }
 

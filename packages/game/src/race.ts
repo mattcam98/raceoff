@@ -56,7 +56,8 @@ export type RaceEvent =
   | { t: 'shield'; k: number }
   | { t: 'blast'; x: number; y: number; z: number }
   | { t: 'boost'; k: number; kind: 'drift' | 'pad' | 'trick' | 'start' | 'nitro' | 'draft' | 'flick'; level: number }
-  | { t: 'drift'; k: number; on: boolean }
+  /** `lost`: the drift ended with sparks that were never cashed in (a knock, a hit, a fall, slowing right down). */
+  | { t: 'drift'; k: number; on: boolean; lost?: boolean }
   | { t: 'wall'; k: number; strength: number }
   | { t: 'bump'; a: number; b: number; strength: number }
   | { t: 'land'; k: number; hard: boolean }
@@ -176,7 +177,7 @@ export class Race {
       wall: (k, strength) => this.events.push({ t: 'wall', k: k.index, strength }),
       boost: (k, kind, level) => this.events.push({ t: 'boost', k: k.index, kind, level }),
       land: (k, hard) => this.events.push({ t: 'land', k: k.index, hard }),
-      drift: (k, on) => this.events.push({ t: 'drift', k: k.index, on }),
+      drift: (k, on, lost) => this.events.push(lost ? { t: 'drift', k: k.index, on, lost } : { t: 'drift', k: k.index, on }),
       fall: (k, water) => this.fall(k, water),
     };
   }
@@ -202,7 +203,8 @@ export class Race {
 
     // Countdown beeps on each whole second, then GO.
     if (before < 0) {
-      for (const n of [3, 2, 1]) if (before < -n && this.time >= -n) this.events.push({ t: 'countdown', n });
+      // The race starts at exactly -3, so the crossing counts from the second itself (or "3" never sounds).
+      for (const n of [3, 2, 1]) if (before <= -n && this.time > -n) this.events.push({ t: 'countdown', n });
       if (this.time >= 0) this.events.push({ t: 'go' });
     }
 
@@ -212,8 +214,10 @@ export class Race {
       const ai = this.ai[k.index];
       k.input = ai ? ai.decide(dt) : (inputs[k.index] ?? NO_INPUT);
       if (k.finished && !k.cpu) {
-        // Finished humans are driven home by the computer so they do not block the track.
-        k.input = { ...NO_INPUT, gas: k.speed < 12 };
+        // Finished humans are driven home along the racing line at a cruise, so they neither block the track nor
+        // drop into a gap too slow to clear it.
+        const steer = clamp(-wrapAngle(this.autopilotHeading(k) - k.h) * 2.6, -1, 1);
+        k.input = { ...NO_INPUT, gas: k.speed < k.params.maxSpeed * 0.8, steer };
       }
     }
 
@@ -403,7 +407,7 @@ export class Race {
     this.events.push({ t: 'fall', k: k.index, water });
     k.respawnT = RESPAWN_TIME;
     k.respawnFrom = { x: k.x, y: k.y, z: k.z };
-    k.stopDrift();
+    this.endDrift(k);
     k.boost = 0;
     k.stun = null;
     k.rocket = 0;
@@ -503,7 +507,7 @@ export class Race {
         break;
       case 'rocket':
         k.rocket = 4.2;
-        k.stopDrift();
+        this.endDrift(k, false);
         k.stun = null;
         break;
     }
@@ -584,9 +588,16 @@ export class Race {
       this.events.push({ t: 'pop', x: k.x, y: k.y + 1, z: k.z });
       return 'blocked';
     }
+    this.endDrift(k);
     k.stunWith(kind);
     this.events.push({ t: 'hit', k: k.index, by, how });
     return 'hit';
+  }
+
+  /** Stop a drift without cashing it in, saying so; with `lost` its sparks are lost (not a rocket taking over). */
+  private endDrift(k: Kart, lost = true) {
+    if (k.driftDir) this.ev.drift(k, false, lost && k.driftLevel > 0);
+    k.stopDrift();
   }
 
   /** Where the orbiting balls of a Triple Balls holder are. */
@@ -886,9 +897,12 @@ export class Race {
           if (!k.grounded || k.respawnT > 0) continue;
           if (Math.hypot(k.x - d.x, k.z - d.z) < OIL_RADIUS + KART_RADIUS * 0.6) {
             const res = this.hit(k, 'spin', 'oil', d.owner);
-            if (res !== 'immune') d.dead = true;
-            if (res === 'immune' && (k.star > 0 || k.rocket > 0)) d.dead = true;
-            break;
+            // Sugar Rush and the rocket wipe it away. A kart it cannot touch drives through and leaves it for
+            // the next, rather than shielding whoever else is on it.
+            if (res !== 'immune' || k.star > 0 || k.rocket > 0) {
+              d.dead = true;
+              break;
+            }
           }
         }
       } else {
@@ -914,14 +928,13 @@ export class Race {
         continue;
       }
       for (const k of this.karts) {
-        if (k.respawnT > 0) continue;
+        // Finished karts cruising home leave the boxes for those still racing.
+        if (k.respawnT > 0 || k.finished) continue;
         const dy = k.y + 0.8 - (b.y + 1.6);
         if ((k.x - b.x) ** 2 + (k.z - b.z) ** 2 < 2.6 * 2.6 && Math.abs(dy) < 3) {
           b.respawn = BOX_RESPAWN;
           this.events.push({ t: 'box', k: k.index, x: b.x, y: b.y + 1.6, z: b.z });
-          if (this.itemMode !== 'off' && !k.item && k.rollT === 0 && !k.finished) {
-            k.rollT = k.cpu ? ROLL_TIME : ROLL_TIME;
-          }
+          if (this.itemMode !== 'off' && !k.item && k.rollT === 0) k.rollT = ROLL_TIME;
           break;
         }
       }
