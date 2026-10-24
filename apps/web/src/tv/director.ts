@@ -43,6 +43,8 @@ export interface DirectorState {
 interface PadState {
   steer: number;
   b: number;
+  /** Buttons pressed since the last step: a tap whose press and release land in one frame still counts once. */
+  pressed: number;
   itemSeen: number;
   pendingItem: boolean;
   at: number;
@@ -101,10 +103,11 @@ export class Director {
     link.onInput = (i) => {
       let p = this.pads.get(i.pid);
       if (!p) {
-        p = { steer: 0, b: 0, itemSeen: i.i, pendingItem: false, at: 0 };
+        p = { steer: 0, b: 0, pressed: 0, itemSeen: i.i, pendingItem: false, at: 0 };
         this.pads.set(i.pid, p);
       }
       p.steer = i.s / 100;
+      p.pressed |= i.b & ~p.b;
       p.b = i.b;
       if (i.i > p.itemSeen) p.pendingItem = true;
       p.itemSeen = i.i;
@@ -167,12 +170,25 @@ export class Director {
       if (p.connected && !prev?.players.find((q) => q.id === p.id)?.connected) this.hudSent.delete(p.id);
     }
     this.keyboard.setPlayers(room.players.filter((p) => p.local).map((p) => p.id));
+    this.markAway();
     // New arrivals get a little pop.
     if (prev && room.players.length > prev.players.length && this.state.phase === 'lobby') play('join');
     if (this.state.phase === 'lobby' && this.attract) {
       const want = this.lobbyTrack();
       if (want !== this.attractTrack) this.startAttract();
     }
+  }
+
+  /** A racer whose phone has dropped mid-race gets a sign on their view, so the room knows why they stopped. */
+  private markAway() {
+    const race = this.race;
+    if (!race || this.attract || !this.room) return;
+    race.karts.forEach((k, i) => {
+      const pid = this.kartPid[i];
+      if (!pid || k.cpu) return;
+      const p = this.room!.players.find((q) => q.id === pid);
+      this.hud.setAway(i, !!p && !p.local && !p.connected);
+    });
   }
 
   private lobbyTrack() {
@@ -321,12 +337,13 @@ export class Director {
     this.view.setRace(this.race, humans, s.camera === 'shared' || humans.length === 0 ? 'shared' : 'split');
     this.view.setCamera('intro');
     this.hud.setRace(this.race);
+    this.markAway();
     this.hud.setVisible(false);
     this.finalLapPlayed = false;
     this.driftLevels = this.race.karts.map(() => 0);
     this.giantCharge.clear();
     this.giantPicked.clear();
-    this.flickedUntil = this.race.karts.map(() => -1);
+    this.flickedUntil = this.race.karts.map(() => -Infinity);
     this.hudSent.clear();
     this.phaseT = 0;
     this.set({ phase: 'intro', track: trackId, records: [], paused: false, autoIn: null });
@@ -371,7 +388,8 @@ export class Director {
     this.view.setCamera('cinema');
     const bestHuman = byPlace.find((k) => !k.cpu);
     if (audioReady()) {
-      music.play('results');
+      // A slow fade-in, so the win or lose jingle is heard on its own first.
+      music.play('results', 1.5);
       play(bestHuman && bestHuman.place <= 3 ? 'win' : 'lose');
     }
     this.publish();
@@ -382,7 +400,8 @@ export class Director {
     void this.link
       .report({
         track: this.state.track as never,
-        laps: s.laps,
+        // The race's own: the host may have changed the setting since it started.
+        laps: race.laps,
         cc: s.cc,
         results: results.filter((r) => !r.cpu).map((r) => ({ name: r.name, character: r.character as never, place: r.place, time: r.time, bestLap: r.bestLap })),
         cupWinner: cupWinner && !cupWinner.cpu ? cupWinner.name : null,
@@ -430,7 +449,7 @@ export class Director {
     }
     this.view.setCamera('podium');
     this.set({ phase: 'podium', standings: this.standings(), autoIn: null });
-    if (audioReady()) music.play('podium');
+    if (audioReady()) music.play('podium', 1.5);
     play('win');
     this.publish();
   }
@@ -496,7 +515,7 @@ export class Director {
         }
       }
     }
-    const alpha = phase === 'intro' || paused ? 1 : this.acc / STEP;
+    const alpha = phase === 'intro' ? 1 : this.acc / STEP;
     this.view.render(alpha, paused ? 0 : dt);
     if (phase === 'race' && race) {
       this.followForGiants(race);
@@ -523,16 +542,18 @@ export class Director {
       if (!p || now - p.at > 1500) return NO_INPUT;
       const item = p.pendingItem;
       p.pendingItem = false;
+      const b = p.b | p.pressed;
+      p.pressed = 0;
       return {
         steer: p.steer,
-        gas: (p.b & BTN.gas) !== 0,
-        brake: (p.b & BTN.brake) !== 0,
-        drift: (p.b & BTN.drift) !== 0,
-        back: (p.b & BTN.back) !== 0 || (p.b & BTN.brake) !== 0,
+        gas: (b & BTN.gas) !== 0,
+        brake: (b & BTN.brake) !== 0,
+        drift: (b & BTN.drift) !== 0,
+        back: (b & BTN.back) !== 0 || (b & BTN.brake) !== 0,
         item,
-        digital: (p.b & BTN.digital) !== 0,
-        autoDrift: (p.b & BTN.autoDrift) !== 0,
-        smart: (p.b & BTN.smart) !== 0,
+        digital: (b & BTN.digital) !== 0,
+        autoDrift: (b & BTN.autoDrift) !== 0,
+        smart: (b & BTN.smart) !== 0,
       };
     });
   }
@@ -632,7 +653,12 @@ export class Director {
         const g = human(e.k) ? 1 : at(e.k) * 0.6;
         if (g > 0.05) play(e.how === 'squash' ? 'squash' : 'hit', this.panOf(e.k), g);
         if (human(e.k)) this.haptic(e.k, 'hit');
-        if (e.by >= 0 && human(e.by) && e.by !== e.k) this.hud.banner(e.by, `Got ${race.karts[e.k].name}!`, 'good', 1200);
+        if (e.by >= 0 && human(e.by) && e.by !== e.k) {
+          this.hud.banner(e.by, `Got ${race.karts[e.k].name}!`, 'good', 1200);
+          // Landing a shot should feel as big as taking one: loud on the attacker's side, and in their hand.
+          if (!human(e.k)) play(e.how === 'squash' ? 'squash' : 'hit', this.panOf(e.by), 0.8);
+          this.haptic(e.by, 'item');
+        }
         break;
       }
       case 'shield': {
@@ -664,6 +690,8 @@ export class Director {
         break;
       case 'drift':
         if (e.on && human(e.k)) play('drift', this.panOf(e.k), 0.6);
+        // Charged sparks thrown away (a wall, a hit, too slow): a fizzle, so the loss is heard, not just missed.
+        else if (e.lost && human(e.k)) play('stall', this.panOf(e.k), 0.5);
         break;
       case 'wall':
         if (human(e.k) && e.strength > 6) {
@@ -679,7 +707,10 @@ export class Director {
         }
         break;
       case 'land':
-        if (human(e.k) && e.hard) play('land', this.panOf(e.k));
+        if (human(e.k) && e.hard) {
+          play('land', this.panOf(e.k));
+          this.haptic(e.k, 'bump');
+        }
         break;
       case 'fall':
         if (human(e.k)) {
@@ -835,7 +866,8 @@ export class Director {
     race.karts.forEach((k, i) => {
       const e = this.engines[i];
       if (!e) return;
-      const sp = Math.abs(k.speed) / k.params.maxSpeed;
+      // Holding DRIFT on the grid revs the engine, so the rocket start's timing can be heard.
+      const sp = race.time < 0 && k.input.drift ? 0.75 : Math.abs(k.speed) / k.params.maxSpeed;
       e.update(sp, !!k.driftDir && k.grounded, k.driftLevel, k.surface === 2 || k.surface === 7, k.boost > 0 || k.rocket > 0, k.respawnT === 0 && race.time > -3);
     });
   }
@@ -877,6 +909,15 @@ export class Director {
 
   get currentRace() {
     return this.race;
+  }
+
+  /** The human karts as the race sees them, for measuring in a browser (window.__RACEOFF_DIAG__). */
+  diag() {
+    const r = this.race;
+    return r?.karts.filter((k) => !k.cpu).map((k) => ({
+      x: +k.x.toFixed(1), y: +k.y.toFixed(1), z: +k.z.toFixed(1), speed: +k.speed.toFixed(1), place: k.place, laps: k.lapTimes.length,
+      respawn: +k.respawnT.toFixed(2), grounded: k.grounded, surface: k.surface,
+    }));
   }
 
   trackName() {

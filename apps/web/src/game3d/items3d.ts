@@ -313,6 +313,15 @@ export class Pool {
     private make: () => THREE.Object3D,
   ) {}
 
+  /** One model made ahead and put away, so its shaders are compiled with the scene's before the race starts. */
+  prewarm() {
+    if (this.spare.length || this.live.size) return;
+    const obj = this.make();
+    obj.visible = false;
+    this.parent.add(obj);
+    this.spare.push(obj);
+  }
+
   begin() {
     for (const p of this.live.values()) p.seen = false;
   }
@@ -389,6 +398,8 @@ export class ItemsView {
     this.orbits.castShadow = true;
     this.group.add(this.orbits);
     this.poolList = [this.balls, this.bees, this.bombs, this.planes, this.oils, this.butters, this.blasts, this.giants];
+    // The first bee, bomb or blast of a race would otherwise stall it compiling their shaders.
+    for (const pool of this.poolList) pool.prewarm();
   }
 
   update(race: Race, alpha: number, dt: number) {

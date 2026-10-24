@@ -374,7 +374,7 @@ function Seg<T extends string | number>({ value, options, onChange }: { value: T
   return (
     <div className="seg">
       {options.map(([v, label]) => (
-        <button type="button" key={String(v)} className={v === value ? 'is-on' : ''} onClick={() => v !== value && onChange(v)}>
+        <button type="button" key={String(v)} className={v === value ? 'is-on' : ''} aria-pressed={v === value} onClick={() => v !== value && onChange(v)}>
           {label}
         </button>
       ))}

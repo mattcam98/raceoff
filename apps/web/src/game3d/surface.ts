@@ -13,14 +13,22 @@ import { shareResource } from './kit';
 const normals = new Map<string, THREE.Texture>();
 const roughs = new Map<string, THREE.Texture>();
 
+/**
+ * The last picture's brightness: reading a canvas back waits on the GPU, and a relief map and a roughness map are
+ * usually made from the same picture one after the other. Only one is kept, so nothing piles up.
+ */
+let last: { source: THREE.Texture['source']; w: number; h: number; lum: Float32Array } | null = null;
+
 function pixels(t: THREE.Texture) {
+  if (last?.source === t.source) return last;
   const src = t.image as HTMLCanvasElement;
   const w = src.width;
   const h = src.height;
   const data = src.getContext('2d')!.getImageData(0, 0, w, h).data;
   const lum = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) lum[i] = (data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114) / 255;
-  return { w, h, lum };
+  last = { source: t.source, w, h, lum };
+  return last;
 }
 
 function toTexture(w: number, h: number, fill: (i: number, out: Uint8ClampedArray, o: number) => void) {

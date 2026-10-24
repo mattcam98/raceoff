@@ -21,7 +21,7 @@ import { THEMES, type Theme } from './themes';
 import { buildWorld } from './world';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, stencil: false });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, depth: false, stencil: false });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.shadowMap.enabled = true;

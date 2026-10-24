@@ -238,7 +238,7 @@ function Seat({ slot, player, vip, link, localIndex }: { slot: number; player: P
     }
   };
   return (
-    <div className={`seat${player.ready ? ' is-ready' : ''}${player.connected ? '' : ' is-away'}`} style={{ '--pc': color, '--cc': ch.color } as React.CSSProperties}>
+    <div className={`seat${player.local ? ' seat--local' : ''}${player.ready ? ' is-ready' : ''}${player.connected ? '' : ' is-away'}`} style={{ '--pc': color, '--cc': ch.color } as React.CSSProperties}>
       <span className="seat__label">
         {PLAYER_LABELS[slot]}
         {vip && <em>Host</em>}

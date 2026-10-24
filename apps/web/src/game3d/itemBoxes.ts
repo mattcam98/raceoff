@@ -44,7 +44,8 @@ const GLASS_FRAG = /* glsl */ `
   void main() {
     vec3 n = normalize(vN);
     vec3 v = normalize(vV);
-    float ndv = abs(dot(n, v));
+    // Rounding can put the dot of two unit vectors a hair over 1, and pow() of a negative is NaN.
+    float ndv = min(abs(dot(n, v)), 1.0);
     float fres = pow(1.0 - ndv, 2.2);
     // A rounded frame round each face.
     vec2 q = abs(vUv - 0.5) * 2.0;

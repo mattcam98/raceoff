@@ -304,6 +304,7 @@
 .hud-name span {
   display: inline-block;
   background: var(--pc);
+  color: var(--hud-ink);
   border-radius: 999px;
   padding: 0.05em 0.5em;
   margin-right: 0.45em;
@@ -668,7 +669,8 @@
   color: var(--text-dim);
 }
 .hud-tick[data-state~='human']::before {
-  background: color-mix(in srgb, var(--pc) 78%, #0b0e26);
+  /* Half ink, so white names pass 5:1 on every player colour (yellow and mint too). */
+  background: color-mix(in srgb, var(--pc) 50%, #0b0e26);
   box-shadow: inset 0 0 0 0.12em color-mix(in srgb, var(--pc) 60%, #fff);
 }
 .hud-tick[data-state~='human'] .hud-tick__name {
@@ -677,6 +679,17 @@
 }
 .hud-tick[data-state~='lead'] .hud-tick__pos {
   color: #ffd23f;
+}
+/* Home: a little chequered flag at the end of the row. */
+.hud-tick[data-state~='done']::after {
+  content: '';
+  flex: none;
+  width: 0.9em;
+  height: 0.9em;
+  margin-left: auto;
+  border-radius: 0.15em;
+  background: repeating-conic-gradient(#fff 0 25%, #1b1740 0 50%) 0 0 / 0.45em 0.45em;
+  box-shadow: 0 0 0 0.08em #1b1740;
 }
 
 /* ---- the giants' feed and the closing clock, top middle */
@@ -758,4 +771,14 @@
 .hud-feed__row.is-out {
   opacity: 0;
   transform: translateY(-0.4em);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-item__reel {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .hud-item__reel .reel::before {
+    font-size: 3.2em;
+  }
 }

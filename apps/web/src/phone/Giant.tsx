@@ -51,7 +51,7 @@ export function GiantPanel({ link, giant, place, vip }: { link: PhoneLink; giant
           <h2>You're the giant!</h2>
           <p>{place ? `You finished ${ordinal(place)}. Now reach into the race.` : 'Not in this race? Reach into it from here.'}</p>
         </div>
-        <div className="giant__charge" aria-label={`${Math.floor(giant.charge)} of ${GIANT_MAX_CHARGE} charges`}>
+        <div className="giant__charge" role="img" aria-label={`${Math.floor(giant.charge)} of ${GIANT_MAX_CHARGE} charges`}>
           {Array.from({ length: GIANT_MAX_CHARGE }, (_, i) => (
             <i key={i} style={{ '--f': Math.max(0, Math.min(1, giant.charge - i)) } as React.CSSProperties} />
           ))}

@@ -168,3 +168,39 @@ export function ballTexture(base: string, band = '#ffffff', pin = '#ffd23f'): TH
   balls.set(key, t);
   return t;
 }
+
+let beam: THREE.Texture | null = null;
+
+/**
+ * The pool of light a kart's headlights throw on the road: narrow at the kart (the top of the picture) and
+ * spreading ahead, brightest a little way out, fading to nothing. White on transparent, drawn added on top.
+ */
+export function headlightTexture(): THREE.Texture {
+  if (beam) return beam;
+  const W = 64;
+  const H = 128;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d')!;
+  const img = g.createImageData(W, H);
+  const smooth = (a: number, b: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  for (let y = 0; y < H; y++) {
+    const v = y / (H - 1);
+    const half = 0.28 + 0.7 * v;
+    const along = smooth(0, 0.18, v) * (1 - smooth(0.45, 1, v));
+    for (let x = 0; x < W; x++) {
+      const u = Math.abs(x / (W - 1) - 0.5) * 2;
+      const a = along * (1 - smooth(half * 0.55, half, u));
+      const o = (y * W + x) * 4;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = 255;
+      img.data[o + 3] = Math.round(a * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  beam = finish(c, false);
+  return beam;
+}

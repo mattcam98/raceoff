@@ -95,7 +95,10 @@ function TvRoom({ code, roomKey }: { code: string; roomKey: string }) {
     d.begin();
     setDirector(d);
     // A handle for poking at the game from the console while developing.
-    if (import.meta.env.DEV) (window as unknown as { raceoff: unknown }).raceoff = { link, director: d, view, hud };
+    // In production too when asked for, so browser tests can drive the karts (director.autopilot).
+    if (import.meta.env.DEV || testMode()) (window as unknown as { raceoff: unknown }).raceoff = { link, director: d, view, hud };
+    // Render counters for measuring in a browser, dev or production.
+    (window as unknown as { __RACEOFF_DIAG__: unknown }).__RACEOFF_DIAG__ = () => ({ ...view.diag(), phase: d.getState().phase, karts: d.diag() });
     const ro = new ResizeObserver(() => {
       view.resize();
     });
@@ -122,6 +125,8 @@ function TvRoom({ code, roomKey }: { code: string; roomKey: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      // Keyboard players never click: any key unlocks the sound too.
+      if (!audioReady()) enableSound();
       if (e.code === 'KeyF' && !e.repeat) toggleFullscreen();
       if ((e.code === 'Escape' || e.code === 'KeyP') && director) {
         const st = director.getState();
@@ -129,7 +134,16 @@ function TvRoom({ code, roomKey }: { code: string; roomKey: string }) {
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // A hidden tab stops drawing, which freezes the race but not the engines' drone: pause it properly.
+    const onHide = () => {
+      const st = director?.getState();
+      if (document.hidden && director && (st?.phase === 'race' || st?.phase === 'intro')) director.setPaused(true);
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('visibilitychange', onHide);
+    };
   }, [director]);
 
   const enableSound = () => {
@@ -166,11 +180,11 @@ function TvRoom({ code, roomKey }: { code: string; roomKey: string }) {
     );
 
   return (
-    <div className="tv" onPointerDown={sound ? undefined : enableSound}>
+    <div className="tv" onPointerDown={() => !audioReady() && enableSound()}>
       <canvas ref={canvasRef} className="tv__canvas" />
       <div ref={hudRef} className="tv__hud" />
       {director && snap?.room && <TvOverlay director={director} link={link} room={snap.room} />}
-      {snap?.status !== 'online' && <span className="pill pill--warn tv__status">Reconnecting…</span>}
+      {snap?.status === 'reconnecting' && <span className="pill pill--warn tv__status">Reconnecting…</span>}
       <div className={`tv__corner${idle && sound ? ' is-idle' : ''}`}>
         {!sound && (
           <button className="pill pill--sound" onClick={enableSound}>
@@ -213,5 +227,13 @@ function TvOverlay({ director, link, room }: { director: Director; link: TvLink;
       return <Standings state={st} director={director} room={room} />;
     case 'podium':
       return <Podium state={st} director={director} room={room} />;
+  }
+}
+
+function testMode() {
+  try {
+    return window.localStorage.getItem('raceoff:test') === '1';
+  } catch {
+    return false;
   }
 }

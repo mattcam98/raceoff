@@ -112,6 +112,8 @@ export class Hud {
   private closingFlag: Flag;
   private feedEl: HTMLElement;
   private race: Race | null = null;
+  /** Karts whose phone has dropped: their view says so until it is back (`setAway`). */
+  private away = new Set<number>();
   visible = false;
 
   constructor(parent: HTMLElement) {
@@ -136,8 +138,19 @@ export class Hud {
     this.root.hidden = !v;
   }
 
+  /**
+   * Mark a kart's phone as gone (or back). While away, that kart's view shows a "PHONE DISCONNECTED" sign over
+   * every other banner, until this is called again with false or the kart finishes. Survives `layout`; cleared
+   * by `setRace`.
+   */
+  setAway(kart: number, away: boolean) {
+    if (away) this.away.add(kart);
+    else this.away.delete(kart);
+  }
+
   setRace(race: Race) {
     this.race = race;
+    this.away.clear();
     this.feedEl.innerHTML = '';
     this.buildMap(race);
     this.tower.innerHTML = '';
@@ -232,23 +245,24 @@ export class Hud {
     this.map.style.height = `${size}px`;
     let mx = 20;
     let my = H - size - 20;
-    if (rects.length >= 3 && !shared) {
+    // With three players the fourth quarter is an overview, with room for the map and the running order.
+    const spare = rects.length === 4 && rects[3].kart === -1 && !shared ? rects[3] : null;
+    if (spare) {
+      mx = spare.x + spare.w * 0.68 - size / 2;
+      my = spare.y + spare.h / 2 - size / 2;
+    } else if (rects.length >= 3 && !shared) {
       mx = W / 2 - size / 2;
       my = H / 2 - size / 2;
-      // With three players the fourth quarter is an overview: the map sits in its middle instead.
-      if (rects.length === 4 && rects[3].kart === -1) {
-        mx = rects[3].x + rects[3].w / 2 - size / 2;
-        my = rects[3].y + rects[3].h / 2 - size / 2;
-      }
     } else if (rects.length === 2 || shared) {
       mx = W / 2 - size / 2;
       my = H - size - 14;
     }
     Object.assign(this.map.style, { left: `${mx}px`, top: `${my}px` });
     this.fitMap(size);
-    // Four quarters have no room for the order; the overview's corner cards say the places.
-    this.tower.dataset.hidden = rects.length > 2 && !shared ? '1' : '0';
-    this.tower.dataset.layout = shared ? 'shared' : rects.length === 2 ? 'split' : 'full';
+    // Four players leave no room for the order; three put it in the spare quarter, beside the map.
+    this.tower.dataset.hidden = rects.length > 2 && !shared && !spare ? '1' : '0';
+    this.tower.dataset.layout = shared ? 'shared' : spare ? 'spare' : rects.length === 2 ? 'split' : 'full';
+    Object.assign(this.tower.style, spare ? { left: `${spare.x + spare.w * 0.06}px`, top: `${spare.y + spare.h / 2}px` } : { left: '', top: '' });
   }
 
   private buildMap(race: Race) {
@@ -446,7 +460,8 @@ export class Hud {
       if (k.place !== p.lastPlace) {
         const up = k.place < p.lastPlace;
         p.lastPlace = k.place;
-        p.placeIn.dataset.delta = up ? 'up' : 'down';
+        // Green for a place gained, red for one lost, fading back to the place colour. Not motion, so not gated.
+        p.placeIn.animate([{ color: up ? '#3ddc84' : '#ff5a4a' }, { color: up ? '#3ddc84' : '#ff5a4a', offset: 0.45 }], { duration: 1100, easing: 'ease-in' });
         flourish(p.placeIn, [{ transform: `scale(${up ? 1.45 : 0.75}) rotate(${up ? -6 : 4}deg)` }, { transform: 'scale(1) rotate(0)' }], 480, SPRING);
       }
 
@@ -494,7 +509,10 @@ export class Hud {
 
       const t = k.finished ? (k.finishTime ?? 0) : Math.max(0, race.time);
       p.time.set(formatTime(t * 1000));
-      if (now > p.bannerUntil) {
+      if (this.away.has(p.kart) && !k.finished) {
+        p.bannerText.set('PHONE DISCONNECTED');
+        p.banner.set('warn');
+      } else if (now > p.bannerUntil) {
         if (k.wrongWayT > 1 && !k.finished) {
           p.bannerText.set('WRONG WAY');
           p.banner.set('wrong');

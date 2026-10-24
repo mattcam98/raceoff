@@ -205,9 +205,8 @@ export function bake(root: THREE.Object3D, name = 'baked'): THREE.Group {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
     if (Array.isArray(m.material) || (m.material as THREE.Material).transparent) return void keep.push(m);
-    let g = m.geometry.clone();
+    const g = m.geometry.clone();
     g.applyMatrix4(m.matrixWorld);
-    if (g.index) g = g.toNonIndexed();
     // Merging needs the same attributes everywhere: position, normal and uv.
     for (const a of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(a)) g.deleteAttribute(a);
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
@@ -228,12 +227,13 @@ export function bake(root: THREE.Object3D, name = 'baked'): THREE.Group {
   const out = new THREE.Group();
   out.name = name;
   for (const b of buckets.values()) {
-    const merged = mergeAll(b.geos);
-    const mm = new THREE.Mesh(merged, b.material);
-    mm.castShadow = b.cast;
-    mm.receiveShadow = b.receive;
-    mm.matrixAutoUpdate = false;
-    out.add(mm);
+    for (const part of quarters(b.geos)) {
+      const mm = new THREE.Mesh(mergeAll(part), b.material);
+      mm.castShadow = b.cast;
+      mm.receiveShadow = b.receive;
+      mm.matrixAutoUpdate = false;
+      out.add(mm);
+    }
   }
   for (const o of keep) {
     // Keep its world placement now that it leaves its parent.
@@ -243,9 +243,42 @@ export function bake(root: THREE.Object3D, name = 'baked'): THREE.Group {
   return out;
 }
 
-function mergeAll(geos: { g: THREE.BufferGeometry; color: THREE.Color | null }[]): THREE.BufferGeometry {
+type Part = { g: THREE.BufferGeometry; color: THREE.Color | null };
+
+/** A finish with this many triangles or more is merged as four meshes, one per quarter of the ground it covers. */
+const SPLIT_TRIANGLES = 15000;
+const tris = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+
+/**
+ * One merged mesh spanning the whole room is drawn by every view and the shadow map wherever they look: a heavy
+ * finish is split into quarters by where its parts stand, so a chase camera skips the ones behind it.
+ */
+function quarters(geos: Part[]): Part[][] {
+  let total = 0;
+  for (const p of geos) total += tris(p.g);
+  if (total < SPLIT_TRIANGLES || geos.length < 4) return [geos];
+  const centres = geos.map((p) => {
+    p.g.computeBoundingBox();
+    return p.g.boundingBox!.getCenter(new THREE.Vector3());
+  });
+  const mid = new THREE.Vector3();
+  for (const c of centres) mid.add(c);
+  mid.divideScalar(centres.length);
+  const out: Part[][] = [[], [], [], []];
+  geos.forEach((p, i) => out[(centres[i].x < mid.x ? 0 : 1) + (centres[i].z < mid.z ? 0 : 2)].push(p));
+  return out.filter((q) => q.length);
+}
+
+/** Merge parts into one indexed geometry: shared vertices stay shared, so each is shaded once, not per triangle. */
+function mergeAll(geos: Part[]): THREE.BufferGeometry {
   let count = 0;
-  for (const { g } of geos) count += g.attributes.position.count;
+  let indices = 0;
+  for (const { g } of geos) {
+    count += g.attributes.position.count;
+    indices += g.index ? g.index.count : g.attributes.position.count;
+  }
+  const index = new Uint32Array(indices);
+  let k = 0;
   const colored = geos.some((x) => x.color);
   const pos = new Float32Array(count * 3);
   const nor = new Float32Array(count * 3);
@@ -254,10 +287,18 @@ function mergeAll(geos: { g: THREE.BufferGeometry; color: THREE.Color | null }[]
   let o = 0;
   for (const { g, color } of geos) {
     const n = g.attributes.position.count;
+    if (g.index) for (let i = 0; i < g.index.count; i++) index[k++] = g.index.getX(i) + o;
+    else for (let i = 0; i < n; i++) index[k++] = i + o;
     pos.set(g.attributes.position.array as Float32Array, o * 3);
     nor.set(g.attributes.normal.array as Float32Array, o * 3);
     uv.set(g.attributes.uv.array as Float32Array, o * 2);
-    if (col && color) for (let i = 0; i < n; i++) col.set([color.r, color.g, color.b], (o + i) * 3);
+    if (col && color) {
+      for (let i = (o + n) * 3, j = o * 3; j < i; j += 3) {
+        col[j] = color.r;
+        col[j + 1] = color.g;
+        col[j + 2] = color.b;
+      }
+    }
     o += n;
     g.dispose();
   }
@@ -266,6 +307,7 @@ function mergeAll(geos: { g: THREE.BufferGeometry; color: THREE.Color | null }[]
   out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   if (col) out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setIndex(new THREE.BufferAttribute(index, 1));
   out.computeBoundingSphere();
   return out;
 }

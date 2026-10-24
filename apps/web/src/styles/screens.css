@@ -247,7 +247,7 @@
   font-family: var(--font-display);
   font-weight: 900;
   background: var(--pc);
-  color: #fff;
+  color: var(--ink-950);
   border-radius: 999px;
   padding: 0.05em 0.5em;
   font-size: 0.72em;
@@ -407,6 +407,7 @@
   font-style: normal;
   font-size: 0.6em;
   background: var(--pc);
+  color: var(--ink-950);
   border-radius: 999px;
   padding: 0.05em 0.45em;
 }

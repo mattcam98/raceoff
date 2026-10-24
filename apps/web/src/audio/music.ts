@@ -425,7 +425,7 @@ class Sequencer {
       this.step += missed;
       this.nextTime += missed * stepDur;
     }
-    while (this.nextTime < c.currentTime + 0.15) {
+    while (this.nextTime < c.currentTime + 0.3) {
       const total = this.bars * 16;
       const i = this.step % total;
       const inBar = i % 16;

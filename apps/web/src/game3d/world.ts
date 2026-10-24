@@ -9,6 +9,7 @@ import { hazardAt, rightX, rightZ, SURF, type HazardState, type Track, type Trac
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { at, bake, ball, box, cone, cyl, decal, disposeTree, group, mat, slab } from './kit';
+import { clutter } from './propClutter';
 import { buildProp } from './props';
 import { roomUniforms } from './rooms';
 import { bumpFrom, roughFrom, withRelief } from './surface';
@@ -128,32 +129,59 @@ function skirts(track: Track, p: TrackPath, theme: Theme): THREE.Object3D | null
   return g.children.length ? g : null;
 }
 
-/** Rumble strips along open edges: a raised, rounded kerb in two colours, bevelled down to the road on both sides. */
+/** Apex kerbs: walled bends tighter than this (1/radius) get a kerb painted on the road along their inside. */
+const APEX_K = 1 / 40;
+
+/** For one side of a path, which samples lie on the inside of a tight walled bend, in runs long enough to read. */
+function apexRuns(S: TrackPath['samples'], side: 'left' | 'right'): boolean[] {
+  const sign = side === 'right' ? 1 : -1;
+  const on = S.map((s) => s[side] === 'wall' && s.k * sign > APEX_K);
+  // Drop flickers: a kerb shorter than a few metres looks like a mistake.
+  for (let i = 0; i < on.length; ) {
+    if (!on[i]) { i++; continue; }
+    let j = i;
+    while (j < on.length && on[j]) j++;
+    if (j - i < 6) on.fill(false, i, j);
+    i = j;
+  }
+  return on;
+}
+
+/**
+ * Rumble strips along open edges: a raised, rounded kerb in two colours, bevelled down to the road on both
+ * sides. Walled bends get a lower one on the road along their inside, so the apex reads; it shares the strips.
+ */
 function curbs(p: TrackPath, theme: Theme): THREE.Object3D {
   const g = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({ map: tex.curb(theme.curb[0], theme.curb[1]), roughness: 0.45 });
   // Across the kerb from the road side out: [offset from the road's edge, height].
   const profile: [number, number][] = [[-0.25, 0.06], [0.15, 0.24], [0.95, 0.24], [1.35, 0.06]];
+  // The apex kerb lies just inside the road's edge, and lower: karts drive over it.
+  const apexProfile: [number, number][] = profile.map(([o, y]) => [o - 1.6, y * 0.5]);
   for (const side of ['left', 'right'] as const) {
     const sign = side === 'right' ? 1 : -1;
     const S = p.samples;
     const n = p.closed ? S.length + 1 : S.length;
+    const apex = apexRuns(S, side);
     for (let band = 0; band + 1 < profile.length; band++) {
       const pts: (StripPoint | null)[] = [];
-      for (let i = 0; i < n; i++) {
-        const s = S[i % S.length];
-        if (s[side] !== 'open') {
-          pts.push(null);
-          continue;
+      for (const [prof, use] of [[profile, (i: number) => S[i % S.length][side] === 'open'], [apexProfile, (i: number) => apex[i % S.length]]] as const) {
+        pts.push(null);
+        for (let i = 0; i < n; i++) {
+          const s = S[i % S.length];
+          if (!use(i)) {
+            pts.push(null);
+            continue;
+          }
+          const [oa, ya] = prof[band];
+          const [ob, yb] = prof[band + 1];
+          const a = (s.w / 2 + oa) * sign;
+          const b = (s.w / 2 + ob) * sign;
+          const inner = { x: s.x + rightX(s.h) * a, z: s.z + rightZ(s.h) * a, y: s.y + ya };
+          const outer = { x: s.x + rightX(s.h) * b, z: s.z + rightZ(s.h) * b, y: s.y + yb };
+          const [L, R] = sign > 0 ? [inner, outer] : [outer, inner];
+          pts.push({ lx: L.x, lz: L.z, ly: L.y, rx: R.x, rz: R.z, ry: R.y, v: s.d / 4 });
         }
-        const [oa, ya] = profile[band];
-        const [ob, yb] = profile[band + 1];
-        const a = (s.w / 2 + oa) * sign;
-        const b = (s.w / 2 + ob) * sign;
-        const inner = { x: s.x + rightX(s.h) * a, z: s.z + rightZ(s.h) * a, y: s.y + ya };
-        const outer = { x: s.x + rightX(s.h) * b, z: s.z + rightZ(s.h) * b, y: s.y + yb };
-        const [L, R] = sign > 0 ? [inner, outer] : [outer, inner];
-        pts.push({ lx: L.x, lz: L.z, ly: L.y, rx: R.x, rz: R.z, ry: R.y, v: s.d / 4 });
       }
       const geo = strip(pts);
       if (geo.index!.count) {
@@ -191,7 +219,11 @@ function painted(geo: THREE.BufferGeometry, color: string) {
   const c = new THREE.Color(color);
   const n = g.attributes.position.count;
   const col = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+  for (let i = 0; i < n * 3; i += 3) {
+    col[i] = c.r;
+    col[i + 1] = c.g;
+    col[i + 2] = c.b;
+  }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   for (const a of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'color'].includes(a)) g.deleteAttribute(a);
   return g;
@@ -757,6 +789,7 @@ export function buildWorld(track: Track): World {
     if (prop.s) o.scale.setScalar(prop.s);
     stat.add(o);
   }
+  stat.add(clutter(track));
 
   // Train lines get their rails drawn.
   for (const h of track.hazards) {
@@ -788,7 +821,11 @@ export function buildWorld(track: Track): World {
   // The room lies outside the sun's shadow map, so its shadows would never show: it does not cast, and it is
   // merged on its own so the track's meshes are not drawn into the shadow map along with it.
   const backdrop = theme.backdrop(track, theme);
-  backdrop.traverse((o) => (o.castShadow = false));
+  // Outside the sun's shadow box: no shadows to cast, none to receive.
+  backdrop.traverse((o) => {
+    o.castShadow = false;
+    o.receiveShadow = false;
+  });
   const room = bake(backdrop, 'room');
   for (const g of [baked, room]) {
     g.traverse((o) => (o.userData.static = true));

@@ -45,6 +45,8 @@
   text-align: center;
   padding: 6px;
   padding-top: max(6px, env(safe-area-inset-top));
+  /* A notice, not a wall: the pause and controls buttons under it still work. */
+  pointer-events: none;
 }
 .offline--soft {
   background: var(--ink-600);
@@ -63,9 +65,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Player chips carry dark ink, not white: white on the P3 yellow and P4 mint is under 2:1. */
 .tag {
   background: var(--pc);
-  color: #fff;
+  color: var(--ink-950);
   font-family: var(--font-display);
   font-weight: 900;
   padding: 3px 10px;
@@ -159,8 +162,9 @@
   top: 4px;
   right: 4px;
   font-style: normal;
-  font-size: 0.65rem;
-  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  color: var(--ink-950);
   border-radius: 999px;
   padding: 1px 6px;
 }
@@ -204,6 +208,86 @@
   color: var(--text-faint);
   margin: 0;
 }
+/*
+ * Held sideways there is no room to stack: the character on the left with the kart bodies under it, the faces
+ * on the right, and Ready kept on screen at the bottom right.
+ */
+@media (orientation: landscape) and (max-height: 520px) {
+  .phone--pick {
+    max-width: 980px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    grid-template-rows: auto auto 1fr auto;
+    grid-template-areas: 'bar bar' 'hero grid' 'bodies grid' 'wait foot';
+    gap: 10px 16px;
+    align-content: start;
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+  .phone--pick .phone-bar {
+    grid-area: bar;
+  }
+  .phone--pick .pick-hero {
+    grid-area: hero;
+    grid-template-columns: 64px 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+  .pick-hero__face {
+    width: 64px;
+    height: 64px;
+  }
+  .pick-hero h2 {
+    font-size: 1.3rem;
+  }
+  .pick-hero p {
+    margin: 2px 0 4px;
+    font-size: 0.85rem;
+  }
+  .stats--phone {
+    gap: 2px;
+  }
+  .phone--pick .pick-bodies {
+    grid-area: bodies;
+    align-self: start;
+  }
+  .pick-bodies button {
+    padding: 6px;
+  }
+  .phone--pick .pick-grid {
+    grid-area: grid;
+    align-self: start;
+    gap: 6px;
+  }
+  .pick-face {
+    padding: 5px 2px 4px;
+    font-size: 0.8rem;
+  }
+  .pick-face i {
+    width: 40px;
+    height: 40px;
+  }
+  .phone--pick .pick-foot {
+    grid-area: foot;
+    position: sticky;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    margin-top: 0;
+  }
+  .phone--pick .pick-foot .btn--big {
+    padding-block: 12px 13px;
+  }
+  .phone--pick .pick-wait {
+    grid-area: wait;
+    align-self: center;
+  }
+  .phone--pick .vip {
+    grid-column: 1 / -1;
+    grid-row: 2 / 4;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 18px;
+  }
+}
+
 .vip {
   display: grid;
   gap: 14px;
@@ -397,7 +481,8 @@
 }
 .pad__banner {
   position: absolute;
-  top: 54px;
+  /* Absolute children ignore the pad's safe-area padding: add the notch back in. */
+  top: calc(54px + env(safe-area-inset-top));
   left: 50%;
   /* Not transform, which the warning's nudge animation would replace. */
   translate: -50%;
@@ -658,6 +743,32 @@
 .pad-btn--drift.charge-3 {
   box-shadow: 0 7px 0 var(--race-deep), 0 0 0 6px #c77dff, 0 0 38px #c77dff;
 }
+/* Spark level as pips under DRIFT, in the spark's colour. */
+.pad-btn__pips {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  opacity: 1 !important;
+}
+.pad-btn__pips i {
+  width: 14px;
+  height: 7px;
+  border-radius: 2px;
+  transform: skewX(-20deg);
+  background: rgb(0 0 0 / 0.3);
+}
+.pad-btn--drift.charge-1 .pad-btn__pips i.on {
+  background: #5ec8ff;
+}
+.pad-btn--drift.charge-2 .pad-btn__pips i.on {
+  background: #ffa630;
+}
+.pad-btn--drift.charge-3 .pad-btn__pips i.on {
+  background: #c77dff;
+}
+.pad-btn__pips i.on {
+  box-shadow: 0 0 0 2px #1b1740;
+}
 .pad-btn--drift.is-down.charge-1,
 .pad-btn--drift.is-down.charge-2,
 .pad-btn--drift.is-down.charge-3 {
@@ -734,6 +845,8 @@
 }
 .pad-btn--brake small {
   position: absolute;
+  /* Grows leftwards from BRAKE's right edge: away from DRIFT and the screen edge. */
+  right: 0;
   bottom: calc(100% + 6px);
   white-space: nowrap;
   color: var(--text-dim);
@@ -899,7 +1012,7 @@
 }
 /* Below a wrong-way banner, so both can show. */
 .pad__banner--giant {
-  top: 96px;
+  top: calc(96px + env(safe-area-inset-top));
 }
 .pad__giant {
   position: absolute;
@@ -1133,4 +1246,12 @@
   width: 1em;
   height: 1em;
   filter: drop-shadow(0 3px 0 rgb(0 0 0 / 0.3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The roulette shows a still "?" (base.css): no fade mask over it. */
+  .pad-btn--item.is-rolling > i {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }

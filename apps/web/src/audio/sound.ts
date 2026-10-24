@@ -80,14 +80,17 @@ function out(pan: number, gain = 1) {
   return g;
 }
 
+/** Pitch multiplier for the sound being played: noises that repeat a lot vary a little, so they never machine-gun. */
+let pitch = 1;
+
 function tone(dest: AudioNode, t0: number, o: ToneOpts) {
   const { ctx } = audio()!;
   const start = t0 + (o.at ?? 0);
   const osc = ctx.createOscillator();
   const env = ctx.createGain();
   osc.type = o.type ?? 'sine';
-  osc.frequency.setValueAtTime(o.freq, start);
-  if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, start + o.dur);
+  osc.frequency.setValueAtTime(o.freq * pitch, start);
+  if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to * pitch, start + o.dur);
   if (o.vib) {
     const lfo = ctx.createOscillator();
     const lg = ctx.createGain();
@@ -134,8 +137,8 @@ function noise(dest: AudioNode, t0: number, o: NoiseOpts) {
   src.loop = true;
   const f = ctx.createBiquadFilter();
   f.type = o.type ?? 'bandpass';
-  f.frequency.setValueAtTime(o.freq, start);
-  if (o.to) f.frequency.exponentialRampToValueAtTime(o.to, start + o.dur);
+  f.frequency.setValueAtTime(o.freq * pitch, start);
+  if (o.to) f.frequency.exponentialRampToValueAtTime(o.to * pitch, start + o.dur);
   f.Q.value = o.q ?? 1;
   const env = ctx.createGain();
   const peak = o.gain ?? 0.3;
@@ -292,10 +295,15 @@ const RECIPES: Record<SoundName, Recipe> = {
 };
 
 /** Play an effect. `pan` places it left (-1) to right (1); `gain` scales it. */
+/** Noises, not notes: tuned sounds (countdown, chimes, jingles) always play at their pitch. */
+const VARIED = new Set<SoundName>(['box', 'roll', 'throw', 'hit', 'bump', 'wall', 'drift', 'land', 'splash', 'pop', 'squash', 'whoosh', 'blast', 'shieldPop']);
+
 export function play(name: SoundName, pan = 0, gain = 1) {
   const a = audio();
   if (!a || a.ctx.state !== 'running') return;
+  pitch = VARIED.has(name) ? 0.94 + Math.random() * 0.12 : 1;
   RECIPES[name](out(pan, gain), a.ctx.currentTime + 0.005);
+  pitch = 1;
 }
 
 // ---------------------------------------------------------------- engines

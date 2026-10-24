@@ -88,17 +88,30 @@ without anyone spending long behind a wall.
   dashboards. React draws the menus around it.
 - `view.ts` owns one WebGL renderer for the whole session and draws one camera
   or up to four viewports into a single HDR buffer; the sun's shadow map is
-  drawn once a frame and shared. Cameras: chase (one per player: it trails the
-  slide in a drift, leans toward the inside, banks a little, dips on landings
-  and widens on boosts), shared table-top, the intro (a crane round the whole
-  table, then a swoop down behind the grid), and a cinematic orbit for the
-  lobby's demo race, results and podium.
+  drawn once a frame, fitted to the table as the sun sees it, and shared.
+  Cameras: chase (one per player: it trails the slide in a drift, leans toward
+  the inside, banks a little, dips on landings and widens on boosts; it comes in
+  past any solid prop between it and the kart, watches a fall from the edge
+  rather than diving after it, and leaves out karts right in front of its lens),
+  shared table-top (framing the box round the players by the lens and the
+  screen's shape), the intro (a crane round the whole table, then a swoop down
+  behind the grid), and a cinematic orbit for the lobby's demo race, results and
+  podium.
 - `post.ts` runs the picture after the scene: depth of field per viewport (the
   far room melts away, the miniature look), bloom for anything brighter than
   white (sparks, flames, lamps, windows), speed blur at the edges on boosts,
-  vignette and a per-theme grade, then Neutral tone mapping. On a slow machine
-  the view first lowers its resolution, then drops depth of field,
-  multisampling and moving shadows.
+  vignette and a per-theme grade, which also does the Neutral tone mapping and
+  sRGB output and dithers after them. On a slow machine the view first lowers
+  its resolution, then drops depth of field, multisampling and moving shadows.
+  It learns the display's refresh first, so a 30 Hz TV is not taken for a slow
+  one, and waits a while after a step down before stepping back up. Every
+  shader a race can need is compiled while the track is built, not mid-race.
+- For measuring in a browser, `window.__RACEOFF_DIAG__()` reports the last
+  frame's draw calls and triangles, frame-time percentiles, shader compiles,
+  buffer size, quality and the human karts. `?quality=high|low&pr=` (or the
+  `raceoff:quality` storage key) pins the quality; the `raceoff:test` storage
+  key exposes the dev handle in production, so browser tests can switch on
+  `director.autopilot`.
 - Materials are physically based. `env.ts` bakes a stand-in of each theme's
   room (walls, floor, a bright window where the sun is) into an environment
   map, so paint, ceramic and chrome reflect the room they are in.
@@ -139,6 +152,21 @@ a racer's dashboard carries `incoming` while something is falling for them.
 | Administrator | A session from signing in to `/settings` with the password (scrypt-hashed); the very first password needs the one-time setup code from the server log | Change settings, close rooms, edit the Hall of Fame |
 | Anyone | Nothing | Make a room, join one with its code, read the records |
 
-Keys and tokens are stored hashed. Every message from a phone is parsed with a
-zod schema before it is used; each socket has a message budget; making rooms,
-joining, connecting and password guesses are rate-limited per address.
+Keys and tokens are stored hashed. Every message from a phone or the TV is
+parsed with a zod schema, with a bound on every list and string, before it is
+used; messages are at most 16 KB and each socket has a message budget; making
+rooms, looking codes up, joining, connecting and password guesses are
+rate-limited per address. A room no TV has opened closes after two minutes, so
+made-up rooms cannot keep the server full. A throw in a socket handler is
+logged, never left to stop the server. Pages refuse to be framed by other sites
+(`frame-ancestors 'none'`). A saved file that cannot be read is moved aside as
+`<name>.bad-<time>` and the server starts afresh (the administrator file
+excepted: the server will not start without it, rather than offer a new setup
+code).
+
+The TV runs the race, so it is the authority on race results, and the Hall of
+Fame believes it within limits: one report for each race the TV has said was
+under way, only for the names of the players in the room when it began, and no
+lap under ten seconds. That stops a casual forgery, not a determined one:
+whoever holds a room's key can run a race of their own with any times above
+those floors.

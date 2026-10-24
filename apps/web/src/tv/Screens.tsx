@@ -11,7 +11,7 @@ const TIPS = [
   'Tuck in right behind another racer for a moment and their slipstream slings you past.',
   'Purple sparks need you to lean into the bend. Hold out for them and the boost lasts far longer.',
   'New to drifting? Turn on "Drift by itself" or "Smart steering" in your phone’s controls (the cog).',
-  'Hold BRAKE while using an item to throw it backwards.',
+  'Flick ITEM downwards on your phone (or hold BRAKE) to throw your item backwards.',
   'Off-road slows you down, unless you are boosting. Shortcuts love a Nitro.',
   'Press DRIFT in mid-air off a ramp to do a trick and land with a boost.',
   'The Bubble blocks one hit. Triple Balls circle you and block hits too.',

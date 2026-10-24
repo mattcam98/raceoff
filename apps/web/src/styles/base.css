@@ -63,6 +63,8 @@ body {
     radial-gradient(1200px 600px at 80% -10%, rgb(61 155 255 / 0.18), transparent 60%),
     radial-gradient(900px 500px at -10% 110%, rgb(255 77 46 / 0.16), transparent 60%),
     var(--ink-900);
+  /* The glows are one viewport tall: repeating them left a seam down long pages (records, settings). */
+  background-repeat: no-repeat;
   color: var(--text);
   font-family: var(--font-body);
   font-size: 16px;
@@ -77,6 +79,10 @@ input,
 select {
   font: inherit;
   color: inherit;
+}
+/* Quick taps on buttons are taps, not a double-tap zoom (pinch zoom still works). */
+button {
+  touch-action: manipulation;
 }
 
 a {
@@ -453,9 +459,11 @@ input[type='range'] {
   gap: 6px;
   margin-top: 8px;
 }
+/* Eight faces must fit a 320px phone without a sideways scroll. */
 .home__faces i {
-  width: 44px;
-  height: 44px;
+  width: min(44px, calc((100vw - 32px - 42px) / 8));
+  height: auto;
+  aspect-ratio: 1;
   display: block;
   animation: bob 2.4s ease-in-out infinite;
 }
@@ -820,5 +828,30 @@ input[type='range'] {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+/* After the reel's own rules, so these win. */
+@media (prefers-reduced-motion: reduce) {
+  /* A stopped reel would show its first item (the ball) as if it were the prize: show a plain "?" instead. */
+  .reel {
+    animation: none !important;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+  }
+  .reel > i {
+    display: none;
+  }
+  .reel::before {
+    content: '?';
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-style: italic;
+    font-size: 2.6em;
+    line-height: 1;
+    color: var(--sun);
+    -webkit-text-stroke: 0.1em #1b1740;
+    paint-order: stroke fill;
   }
 }

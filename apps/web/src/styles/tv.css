@@ -5,8 +5,37 @@
   inset: 0;
   overflow: hidden;
   background: var(--ink-950);
-  font-size: clamp(13px, 1.05vw, 22px);
+  font-size: clamp(14px, 1.05vw, 22px);
   user-select: none;
+}
+/*
+ * The shared controls (base.css) are sized in rem for phones. On the TV they follow the screen's own scale
+ * instead, so buttons, pills and small labels grow and shrink with everything else.
+ */
+.tv .btn {
+  font-size: 1.05em;
+}
+.tv .btn--big {
+  font-size: 1.3em;
+}
+.tv .btn--tiny {
+  font-size: 0.8em;
+}
+.tv .pill {
+  font-size: 0.9em;
+}
+.tv .notice {
+  font-size: 0.9em;
+}
+.tv .stats dt {
+  font-size: 0.8em;
+}
+.tv .rec-track dt,
+.tv .records__players th {
+  font-size: 0.72em;
+}
+.tv .rec-list {
+  font-size: 0.9em;
 }
 .tv__canvas {
   position: absolute;
@@ -210,7 +239,7 @@
   top: 0.6em;
   left: 0.7em;
   background: var(--pc);
-  color: #fff;
+  color: var(--ink-950);
   font-family: var(--font-display);
   font-style: italic;
   font-weight: 900;
@@ -222,7 +251,8 @@
 .seat__label em {
   font-style: normal;
   font-size: 0.7em;
-  background: rgb(0 0 0 / 0.25);
+  background: var(--ink-950);
+  color: #fff;
   border-radius: 999px;
   padding: 0.1em 0.5em;
   margin-left: 0.4em;
@@ -434,7 +464,7 @@
   justify-self: start;
 }
 .row__label {
-  font-size: 0.72em;
+  font-size: 0.78em;
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -559,12 +589,22 @@
   gap: 1em;
   margin-top: auto;
 }
+/* On glass, not bare: the demo race behind it is often bright. */
 .lobby__hint {
-  flex: 1;
-  text-align: right;
-  margin: 0;
+  margin: 0 0 0 auto;
+  padding: 0.45em 1.1em;
+  border-radius: 999px;
+  background: var(--glass-strong);
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-dim);
   font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lobby__hint b {
+  color: var(--text);
 }
 .lobby__start .icon {
   width: 1.3em;
@@ -578,6 +618,16 @@
   }
   .seats {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/*
+ * Up to 1080p a keyboard seat (its keys and buttons) is the tallest thing in the row: it drops the stat bars,
+ * which the arrows beside its kart name make less needed, so the second row of tracks is not cut off.
+ */
+@media (max-height: 1200px) {
+  .seat--local .stats {
+    display: none;
   }
 }
 

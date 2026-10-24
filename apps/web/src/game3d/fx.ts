@@ -369,7 +369,9 @@ class Flames {
   }
 
   flush(time: number) {
-    flameMaterial.uniforms.uTime.value = time;
+    // Wrapped where every sin(uTime * whole number) in the shader comes round seamlessly: a TV runs for hours,
+    // and sin() of huge arguments loses precision on some graphics chips.
+    flameMaterial.uniforms.uTime.value = time % (32 * Math.PI);
     this.mesh.count = this.n;
     this.mesh.visible = this.n > 0;
     this.mesh.instanceMatrix.needsUpdate = true;
@@ -420,11 +422,17 @@ export class Fx {
     active = this;
   }
 
-  /** Compile the scene's shaders with the blast light showing too, ahead of the first blast. */
+  /**
+   * Compile the scene's shaders both ways, without the blast light (most frames) and with it (a blast), so
+   * neither the first frame of the race nor the first blast stops to compile.
+   */
   warm(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
+    const shown = this.light.visible;
+    this.light.visible = false;
+    renderer.compile(scene, camera);
     this.light.visible = true;
     renderer.compile(scene, camera);
-    this.light.visible = false;
+    this.light.visible = shown;
   }
 
   /** Kept for the view, which sets it per viewport; quads are sized in the world and need no pixel scale. */

@@ -4,8 +4,8 @@
  *
  *   depth of field   far scenery melts into a soft blur, the miniature look
  *   bloom            sparks, flames, glowing things and sun glints spill light
- *   grade            speed blur at the edges, vignette, contrast, saturation
- *   output           tone mapping to the screen
+ *   grade            speed blur at the edges, vignette, contrast, saturation, then tone mapping and
+ *                    sRGB straight to the screen, with a little dither after them
  *
  * Effects that depend on a camera (depth of field, vignette, speed blur) are
  * worked out per viewport, so split screen gets four of each.
@@ -13,7 +13,6 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { FullScreenQuad, Pass } from 'three/examples/jsm/postprocessing/Pass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
 export const MAX_VIEWS = 4;
@@ -87,6 +86,13 @@ function dofMaterial(first: boolean) {
       uniform float uMaxR;
       varying vec2 vUv;
       ${RECT_GLSL}
+      // The first pass reads the scene: one NaN or Inf pixel (a shader edge case, half-float overflow) would be spread
+      // by the blur's zero-weight taps (Inf * 0 is NaN) and by bloom into a black box, so it stops here.
+      vec3 fetch(vec2 uv) {
+        vec3 c = texture2D(tColor, uv).rgb;
+        ${first ? 'if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0); c = clamp(c, 0.0, 60000.0);' : ''}
+        return c;
+      }
       float cocAt(vec2 uv) {
         ${first ? `
         vec2 local;
@@ -99,17 +105,28 @@ function dofMaterial(first: boolean) {
         return uMaxR * smoothstep(c.z, c.z * 3.5, dist);` : `return texture2D(tColor, uv).a;`}
       }
       void main() {
+        ${first ? 'if (uMaxR <= 0.0) { gl_FragColor = vec4(fetch(vUv), 0.0); return; }' : ''}
         float coc = cocAt(vUv);
-        vec3 sum = texture2D(tColor, vUv).rgb;
+        vec3 sum = fetch(vUv);
         float wsum = 1.0;
         if (coc > 0.25) {
+          // Taps stay inside this pixel's own viewport, so split-screen views do not bleed into each other.
+          vec2 lo = vec2(0.0);
+          vec2 hi = vec2(1.0);
+          vec2 local;
+          int vi = viewAt(vUv / uTexel, local);
+          if (vi >= 0) {
+            vec4 r = uRects[vi];
+            lo = (r.xy + 0.5) * uTexel;
+            hi = (r.xy + r.zw - 0.5) * uTexel;
+          }
           for (int k = -4; k <= 4; k++) {
             if (k == 0) continue;
             float off = float(k) * coc / 4.0;
-            vec2 uv = vUv + uDir * uTexel * off;
+            vec2 uv = clamp(vUv + uDir * uTexel * off, lo, hi);
             float sc = cocAt(uv);
             float w = clamp(sc - abs(off) + 1.0, 0.0, 1.0);
-            sum += texture2D(tColor, uv).rgb * w;
+            sum += fetch(uv) * w;
             wsum += w;
           }
         }
@@ -171,10 +188,15 @@ const gradeMaterial = () =>
         // Contrast around a mid grey, in a way that cannot push colours negative.
         col = 0.18 * pow(col / 0.18, vec3(uContrast));
         col *= 1.0 - uVignette * smoothstep(0.35, 0.95, edge);
-        // A whisper of noise breaks up banding in smooth gradients.
-        float n = fract(sin(dot(gl_FragCoord.xy + uTime, vec2(12.9898, 78.233))) * 43758.5453);
-        col += (n - 0.5) / 255.0;
         gl_FragColor = vec4(col, 1.0);
+        // Drawn straight to the screen: three supplies the renderer's tone mapping and the sRGB encoding here.
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        // A whisper of noise breaks up banding, added in display values so dark and bright get the same amount.
+        // Interleaved gradient noise, stepped each frame: no large sin() arguments, no visible pattern.
+        vec2 p = gl_FragCoord.xy + 5.588238 * floor(mod(uTime * 60.0, 64.0));
+        float n = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+        gl_FragColor.rgb += (n - 0.5) / 255.0;
       }`,
     depthTest: false,
     depthWrite: false,
@@ -203,6 +225,8 @@ export class Post {
   private composer: EffectComposer;
   private dofH = dofMaterial(true);
   private dofV = dofMaterial(false);
+  /** The second blur pass, skipped when there is no depth of field (the first still resolves the scene). */
+  private dofVPass: ShaderStep;
   private grade = gradeMaterial();
   private bloom: UnrealBloomPass;
   private width = 1;
@@ -217,11 +241,11 @@ export class Post {
     this.composer = new EffectComposer(renderer);
     // The scene is not drawn by a pass: the view draws it, viewport by viewport, then hands over.
     this.composer.addPass(new ShaderStep(this.dofH, () => this.scene.texture));
-    this.composer.addPass(new ShaderStep(this.dofV));
+    this.dofVPass = new ShaderStep(this.dofV);
+    this.composer.addPass(this.dofVPass);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 1.6);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new ShaderStep(this.grade));
-    this.composer.addPass(new OutputPass());
     this.dofH.uniforms.uDir.value.set(1, 0);
     this.dofV.uniforms.uDir.value.set(0, 1);
   }
@@ -253,6 +277,11 @@ export class Post {
     this.applyDof();
   }
 
+  /** For diagnostics: the buffer the scene is drawn into and what runs over it. */
+  get state() {
+    return { width: this.width, height: this.height, msaa: this.scene.samples, dof: this.dofVPass.enabled };
+  }
+
   /** Lower quality on slow machines: no depth of field, no multisampling. */
   setQuality(high: boolean) {
     this.dofOn = high;
@@ -276,6 +305,7 @@ export class Post {
     const r = this.dofOn ? (this.dofStrength * this.height) / 1080 : 0;
     this.dofH.uniforms.uMaxR.value = r;
     this.dofV.uniforms.uMaxR.value = r;
+    this.dofVPass.enabled = r > 0;
   }
 
   /** Begin a frame: the scene target is cleared and ready for the viewports. */

@@ -8,6 +8,7 @@ import { at, box, cyl, group, lathe, mat, slab } from './kit';
 import type { Grade } from './post';
 import { buildRoom, buildSky, onWall, type Room, type RoomSpec } from './rooms';
 import { withRelief, type Relief } from './surface';
+import { offRoadSpots } from './propClutter';
 import { buildProp } from './props';
 import { tex } from './textures';
 
@@ -309,6 +310,14 @@ export const THEMES: Record<string, Theme> = {
         // Flower clumps are rich (about ten thousand triangles), so only a few; grass tufts are cheap.
         const flower = i % 12 === 0;
         g.add(at(buildProp(flower ? 'flowers' : 'grass', flower ? colors[i % colors.length] : undefined), x, 0, z, 0, r() * 6, 0));
+      }
+      // And over the lawn inside and beside the lap, wherever the grid says nobody races. Tufts are taller than a
+      // kart and karts drive through them, so they keep well back from the road, and the nearer ones are short.
+      const lawn = offRoadSpots(t, 320, 11, 30, 3).filter((sp) => sp.d > 22).slice(0, 130);
+      for (const [i, sp] of lawn.entries()) {
+        const tuft = at(buildProp('grass', i % 7), sp.x, 0, sp.z, 0, r() * 6, 0);
+        tuft.scale.setScalar(sp.d > 45 ? 1 : 0.55);
+        g.add(tuft);
       }
       return g;
     },

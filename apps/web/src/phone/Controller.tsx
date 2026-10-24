@@ -40,6 +40,10 @@ const HEARTBEAT_MS = 120;
 const EARLY_MS = 15;
 /** No steering inside this share of the travel, so a resting thumb drives straight. */
 const DEAD_ZONE = 0.06;
+/** An ITEM press waits this long for a flick down (throw backwards) before it counts as a plain tap. */
+const FLICK_MS = 80;
+/** How far down a thumb must flick on ITEM to throw backwards, in pixels. */
+const FLICK_PX = 20;
 /** Tilt for full lock, in radians (about 30 degrees). */
 const TILT_LOCK = 0.52;
 /** Share of each new tilt reading taken in: hands shake and the sensor is noisy, so a little smoothing, at a frame or two of lag. */
@@ -97,6 +101,8 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   /** Send the input now rather than at the next beat. */
   const sendNow = useRef<() => void>(() => {});
   const arrows = useRef(new Map<number, -1 | 1>());
+  /** An ITEM press still deciding between a tap and a flick down. */
+  const flick = useRef<{ id: number; y: number; timer: number } | null>(null);
 
   useEffect(() => {
     link.onHud = (h) => setHud(h);
@@ -150,6 +156,9 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   useEffect(() => {
     let last = '';
     let lastAt = 0;
+    // A tap that starts and ends between two sends would never reach the TV: presses are held until one is sent.
+    let seen = 0;
+    let latched = 0;
     const send = (beat: boolean) => {
       // In the background (another app, the screen off) the browser still runs this about once a second: send
       // hands-off, so the kart coasts instead of driving on with the last steer and the gas held.
@@ -157,8 +166,14 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         steer.current = 0;
         buttons.current = 0;
       }
+      latched |= buttons.current & ~seen;
+      seen = buttons.current;
+      const now = performance.now();
+      // Early sends are kept to one a frame, so a fast-reporting touchscreen cannot flood the room.
+      if (!beat && now - lastAt < EARLY_MS) return;
       const s = Math.round(Math.max(-1, Math.min(1, steer.current)) * 100);
-      let b = buttons.current;
+      let b = buttons.current | latched;
+      latched = 0;
       // Holding DRIFT keeps the power on too, so a drift never needs a second thumb for the gas.
       if ((autoGas && !document.hidden) || b & BTN.drift) b |= BTN.gas;
       if (b & BTN.brake) b &= ~BTN.gas;
@@ -166,9 +181,6 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       if (autoDrift) b |= BTN.autoDrift;
       if (smart) b |= BTN.smart;
       const key = `${s}|${b}|${items.current}`;
-      const now = performance.now();
-      // Early sends are kept to one a frame, so a fast-reporting touchscreen cannot flood the room.
-      if (!beat && now - lastAt < EARLY_MS) return;
       if (key !== last || (beat && now - lastAt > HEARTBEAT_MS)) {
         link.input(s, b, items.current);
         last = key;
@@ -229,7 +241,15 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
     if (on) buzz('tick');
   }, []);
 
-  const useItem = () => {
+  /** Use the item; `back` throws it behind, as holding BRAKE does, without braking. */
+  const useItem = (back = false) => {
+    if (back) {
+      setBit(BTN.back, true);
+      // Held a moment, so the press and its direction reach the TV together. BRAKE keeps it held as before.
+      window.setTimeout(() => {
+        if (!(buttons.current & BTN.brake)) setBit(BTN.back, false);
+      }, 200);
+    }
     items.current++;
     sendNow.current();
     setPressed((p) => ({ ...p, item: true }));
@@ -384,6 +404,30 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
   const finished = hud?.finished;
   const countdown = hud?.stage === 'countdown' || game.phase === 'intro';
 
+  const settleFlick = (back: boolean) => {
+    const f = flick.current;
+    if (!f) return;
+    window.clearTimeout(f.timer);
+    flick.current = null;
+    useItem(back);
+  };
+  /** ITEM: a tap uses it ahead; a flick down throws it backwards, so the right thumb never needs BRAKE too. */
+  const itemHandlers = {
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      // Nothing to aim yet (empty, or the roulette still spinning): answer at once.
+      if (!holding || flick.current) return void useItem();
+      capture(e);
+      flick.current = { id: e.pointerId, y: e.clientY, timer: window.setTimeout(() => settleFlick(false), FLICK_MS) };
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const f = flick.current;
+      if (f && f.id === e.pointerId && e.clientY - f.y > FLICK_PX) settleFlick(true);
+    },
+    onPointerUp: (e: React.PointerEvent) => flick.current?.id === e.pointerId && settleFlick(false),
+    onPointerCancel: (e: React.PointerEvent) => flick.current?.id === e.pointerId && settleFlick(false),
+  };
+
   const status =
     hud && !countdown ? (
       <>
@@ -501,8 +545,8 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
       <section className="pad__act">
         <button
           className={`pad-btn pad-btn--item${pressed.item ? ' is-down' : ''}${hud?.rolling ? ' is-rolling' : ''}${holding ? ' is-full' : ''}`}
-          onPointerDown={(e) => (e.preventDefault(), useItem())}
-          aria-label={holding ? `Use ${itemById(hud!.item!)?.name}` : 'Use item'}
+          {...itemHandlers}
+          aria-label={holding ? `Use ${itemById(hud!.item!)?.name} (flick down to throw back)` : 'Use item'}
         >
           <i dangerouslySetInnerHTML={{ __html: itemIcon }} />
           {hud && hud.count > 1 && !hud.rolling && <em>×{hud.count}</em>}
@@ -510,11 +554,22 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
         </button>
         <button className={`pad-btn pad-btn--drift charge-${charge}${pressed.drift ? ' is-down' : ''}`} {...hold('drift')} aria-label="Drift (hold)">
           <span>DRIFT</span>
-          <small>{countdown ? 'tap on GO' : 'hold'}</small>
+          {countdown ? (
+            <small>tap on GO</small>
+          ) : charge ? (
+            // The spark level as a count, not only the ring's colour (iPhones cannot buzz it either).
+            <small className="pad-btn__pips" aria-hidden>
+              {[1, 2, 3].map((n) => (
+                <i key={n} className={n <= charge ? 'on' : ''} />
+              ))}
+            </small>
+          ) : (
+            <small>hold</small>
+          )}
         </button>
         <button className={`pad-btn pad-btn--brake${pressed.brake ? ' is-down' : ''}`} {...hold('brake')} aria-label="Brake and reverse">
           <span>BRAKE</span>
-          {holding && <small>+ ITEM throws back</small>}
+          {holding && <small>Flick ITEM ↓ to throw back</small>}
         </button>
         {!autoGas && (
           <button className={`pad-btn pad-btn--gas${pressed.gas ? ' is-down' : ''}`} {...hold('gas')} aria-label="Accelerate">
@@ -554,7 +609,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
               <span>Steering</span>
               <div className="seg">
                 {(['touch', 'tilt', 'buttons'] as SteerMode[]).map((m) => (
-                  <button key={m} className={mode === m ? 'is-on' : ''} onClick={() => void chooseMode(m)}>
+                  <button key={m} className={mode === m ? 'is-on' : ''} aria-pressed={mode === m} onClick={() => void chooseMode(m)}>
                     {m === 'touch' ? 'Slide' : m === 'tilt' ? 'Tilt' : 'Arrows'}
                   </button>
                 ))}
@@ -632,7 +687,7 @@ export function Controller({ link, me, game, vip }: { link: PhoneLink; me: Playe
             </label>
             {canVibrate() && <VibrationToggle />}
             <p className="dim sheet__tip">
-              Drifting: hold DRIFT and steer into the bend to tighten it, out of it to widen it. Any lean into the bend charges
+              Flick ITEM downwards to throw your item behind you. Drifting: hold DRIFT and steer into the bend to tighten it, out of it to widen it. Any lean into the bend charges
               fully. Let go for a boost: blue, orange, then purple sparks{canVibrate() ? ', one buzz per colour' : ''}.
             </p>
             <button className="btn btn--go" onClick={() => setMenu(false)}>

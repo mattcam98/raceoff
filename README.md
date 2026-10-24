@@ -100,8 +100,8 @@ slide between. The right thumb has, on its natural arc:
   purple, fastest while you lean into the bend (any real lean counts, not only
   full lock); let go for a speed boost that grows with them, purple by far the
   longest. Tap it in mid-air off a ramp for a trick and a boost on landing.
-- **ITEM**, up and in from DRIFT: use what you are holding. Hold **BRAKE** at
-  the same time to throw it backwards.
+- **ITEM**, up and in from DRIFT: use what you are holding. Flick down off it
+  (or hold **BRAKE** at the same time) to throw it backwards.
 - **BRAKE**: slow down, and reverse when stopped.
 
 Held sideways, the place and lap are in the top bar; held upright, they fill the

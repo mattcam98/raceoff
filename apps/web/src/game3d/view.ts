@@ -6,15 +6,17 @@
  */
 import * as THREE from 'three';
 import { CHARACTERS, PLAYER_COLORS, PLAYER_LABELS, characterById } from '@raceoff/shared';
-import { clamp, damp, fwdX, fwdZ, lerp, rightX, rightZ, wrapAngle, SURF, type Kart, type Race, type RaceEvent, type Track } from '@raceoff/game';
+import { clamp, colliderDistance, damp, fwdX, fwdZ, lerp, rightX, rightZ, wrapAngle, SURF, type Collider, type Kart, type Race, type RaceEvent, type Track } from '@raceoff/game';
 import { Fx } from './fx';
 import { emitEvent, emitKart } from './fxKart';
 import { environmentFor } from './env';
 import { disposeTree, mat } from './kit';
+import { headlightTexture } from './fxTextures';
 import { ItemsView } from './items3d';
 import { animateKart } from './kartAnim';
 import { buildKart, shieldUniforms, type KartRig } from './kartModel';
 import { Post, type PostView } from './post';
+import { roomUniforms } from './rooms';
 import { Skids } from './skids';
 import { tex } from './textures';
 import type { Theme } from './themes';
@@ -50,6 +52,10 @@ interface Chase {
   dipV: number;
   /** Speed blur at the edges of the view, eased. */
   blur: number;
+  /** How much of its distance the camera keeps: less when scenery stands between it and the kart. */
+  reach: number;
+  /** Height of the road the kart last drove on: a fall is watched from there. */
+  edgeY: number;
   init: boolean;
 }
 
@@ -59,6 +65,57 @@ const tmpV2 = new THREE.Vector3();
 const tmpV3 = new THREE.Vector3();
 const tmpV4 = new THREE.Vector3();
 const tmpColor = new THREE.Color();
+const tmpM = new THREE.Matrix4();
+const tmpQ = new THREE.Quaternion();
+const nearBuf: Collider[] = [];
+const UP = new THREE.Vector3(0, 1, 0);
+const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
+
+/** Each kart's model is on its own layer from here, so one viewport can leave out a kart right in front of its lens. */
+const KART_LAYER = 8;
+/** Every layer but the players' name tags (1 to 4): what the overview and cinematic cameras see. */
+const ALL_BUT_TAGS = ~0b11110;
+/** A kart this close to a chase camera (that is not the one it follows) would fill the view: it is left out. */
+const NEAR_CAMERA = 2.6;
+/** Sees every layer and nothing at all: the camera the shared shadow map is drawn with. */
+const shadowOnly = new THREE.OrthographicCamera(0, 0.001, 0.001, 0, 0, 0.001);
+shadowOnly.position.set(0, -1e6, 0);
+shadowOnly.layers.enableAll();
+shadowOnly.updateMatrixWorld();
+const ONE_PIXEL: PostView = { x: 0, y: 0, w: 1, h: 1, near: 0, far: 0.001, focus: 0, speed: 0 };
+/** Nor one up to this far along the line from the lens to the kart it follows, close to that line: it hides it. */
+const NEAR_BLOCK = 4.5;
+/** The shadow map's texel, in metres: its size follows the table, up to MAX_SHADOW. */
+const SHADOW_TEXEL = 0.1;
+const MAX_SHADOW = 4096;
+/** Ways up to try for the shadow camera; the sun is never straight overhead, so none is along its view. */
+const SHADOW_UPS = [new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 1).normalize(), new THREE.Vector3(1, 0, -1).normalize()];
+/** Most pixels the scene is drawn at, before a slow machine asks for fewer: 4K screens start near 1440p. */
+const MAX_PIXELS = 3.7e6;
+/** Wraps the shield's clock where its sin(uTime * 3) comes round seamlessly. */
+const SHIELD_PERIOD = 32 * Math.PI;
+
+/** `?quality=high|low&pr=1` (or the same in localStorage 'raceoff:quality', which survives /tv's redirect) pins quality. */
+function qualityPin(): { quality: 'high' | 'low' | null; pr: number | null } {
+  let q: URLSearchParams | null = null;
+  try {
+    const url = new URLSearchParams(location.search);
+    if (url.has('quality') || url.has('pr')) q = url;
+    else {
+      const saved = localStorage.getItem('raceoff:quality');
+      if (saved) q = new URLSearchParams(saved.includes('=') ? saved : `quality=${saved}`);
+    }
+  } catch {
+    // No storage (a private window): nothing pinned.
+  }
+  if (!q) return { quality: null, pr: null };
+  const quality = q.get('quality');
+  const pr = Number(q.get('pr'));
+  return { quality: quality === 'high' || quality === 'low' ? quality : null, pr: pr > 0 && pr <= 3 ? pr : null };
+}
+
+/** Value at fraction `f` of an ascending list. */
+const pct = (sorted: number[], f: number) => (sorted.length ? +sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * f))].toFixed(1) : 0);
 
 export class GameView {
   readonly renderer: THREE.WebGLRenderer;
@@ -81,7 +138,7 @@ export class GameView {
   readonly fx = new Fx();
   readonly skids = new Skids();
   private chases: Chase[] = [];
-  private overview = new THREE.PerspectiveCamera(50, 1, 1, 3000);
+  private overview = new THREE.PerspectiveCamera(50, 16 / 9, 1, 3000);
   private overviewPos = new THREE.Vector3();
   private overviewLook = new THREE.Vector3();
   private cinema = new THREE.PerspectiveCamera(55, 1, 0.5, 3000);
@@ -96,6 +153,27 @@ export class GameView {
   private height = 1;
   private pixelRatio = 1;
   private frameTimes: number[] = [];
+  /** Pinned by the URL: no adapting. */
+  private pin = qualityPin();
+  /** The display's own frame interval, once seen: a 30 Hz screen's steady 33 ms is not a struggling machine. */
+  private refreshMs = Infinity;
+  /** No stepping the resolution back up until then (performance.now()), after it had to come down. */
+  private holdUntil = 0;
+  /** A resolution stepped down from twice is not tried again: no see-sawing between two sizes. */
+  private ceiling = Infinity;
+  private downFrom = new Map<number, number>();
+  /** The last few hundred frame intervals and their compile counts, for diag(). */
+  private ring = new Float32Array(240);
+  private ringN = 0;
+  private frameNo = 0;
+  private lastPrograms = 0;
+  private compiledTotal = 0;
+  private compileFrames = 0;
+  private lastCompileFrame = -1;
+  private shadowTexel = 0;
+  private shadowDrawn = false;
+  /** Night: the pools of light ahead of every kart, one instanced draw. */
+  private headlights: THREE.InstancedMesh | null = null;
   private time = 0;
   private podiumGroup: THREE.Group | null = null;
   private podiumCenter: THREE.Vector3 | null = null;
@@ -114,7 +192,9 @@ export class GameView {
   onLayout: (rects: ViewportRect[]) => void = () => {};
 
   constructor(private canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: false });
+    // The scene is multisampled in its own buffer and the screen only ever gets one full-screen picture, drawn with
+    // no depth test: a multisampled, depth-buffered canvas would be memory and a resolve every frame for nothing.
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, depth: false, powerPreference: 'high-performance', stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1;
@@ -122,9 +202,15 @@ export class GameView {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.post = new Post(this.renderer);
     this.renderer.shadowMap.autoUpdate = false;
+    // Counted over the whole frame (every viewport and post pass), not just the last draw.
+    this.renderer.info.autoReset = false;
     // The shadow map is drawn only when the scene changes; a restored context starts with it empty.
     canvas.addEventListener('webglcontextrestored', this.onContextRestored);
-    this.pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    this.pixelRatio = this.pin.pr ?? Math.min(window.devicePixelRatio || 1, 1.5);
+    // Matrices are brought up to date once a frame, not once per viewport.
+    this.scene.matrixWorldAutoUpdate = false;
+    this.overview.layers.mask = ALL_BUT_TAGS;
+    this.cinema.layers.mask = ALL_BUT_TAGS;
 
     this.hemi = new THREE.HemisphereLight('#ffffff', '#888888', 1);
     this.sun = new THREE.DirectionalLight('#ffffff', 2);
@@ -136,6 +222,7 @@ export class GameView {
     this.sun.shadow.radius = 3;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.fx.group, this.skids.mesh);
     this.applySize();
+    if (this.pin.quality === 'low') this.dropQuality();
   }
 
   // ---------------------------------------------------------------- setup
@@ -143,10 +230,14 @@ export class GameView {
   /** Swap in a race on a track. `viewers` are the kart indexes that get a viewport. */
   setRace(race: Race, viewers: number[], layout: Layout) {
     const track = race.track;
+    // The outgoing race's models are freed only after the new ones are compiled: their shader programs stay alive
+    // meanwhile, so whatever the new race shares with the old is not compiled all over again.
+    const trash: (() => void)[] = [];
     if (this.track !== track) {
       if (this.world) {
-        this.scene.remove(this.world.group);
-        this.world.dispose();
+        const old = this.world;
+        this.scene.remove(old.group);
+        trash.push(() => old.dispose());
       }
       this.track = track;
       this.world = buildWorld(track);
@@ -168,15 +259,7 @@ export class GameView {
       const cz = (b.minZ + b.maxZ) / 2;
       this.sun.position.set(cx + th.sun.x, track.def.floorY + th.sun.y, cz + th.sun.z);
       this.sun.target.position.set(cx, track.def.floorY, cz);
-      const half = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) / 2 + 20;
-      const cam = this.sun.shadow.camera;
-      cam.left = -half;
-      cam.right = half;
-      cam.top = half;
-      cam.bottom = -half;
-      cam.near = 10;
-      cam.far = 900;
-      cam.updateProjectionMatrix();
+      this.fitShadow(track);
       for (const l of this.extraLights) this.scene.remove(l);
       this.extraLights = [];
       if (th.night) {
@@ -188,6 +271,27 @@ export class GameView {
         }
       }
     }
+    if (this.headlights) {
+      const old = this.headlights;
+      this.scene.remove(old);
+      trash.push(() => {
+        old.geometry.dispose();
+        (old.material as THREE.Material).dispose();
+        old.dispose();
+      });
+      this.headlights = null;
+    }
+    if (this.world?.theme.night) {
+      const pool = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ map: headlightTexture(), color: new THREE.Color(1, 0.88, 0.66).multiplyScalar(0.42), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -2 }),
+        race.karts.length,
+      );
+      pool.frustumCulled = false;
+      pool.renderOrder = 2;
+      this.headlights = pool;
+      this.scene.add(pool);
+    }
     this.race = race;
     if (this.podiumGroup) {
       this.scene.remove(this.podiumGroup);
@@ -198,11 +302,12 @@ export class GameView {
     this.hidden.clear();
     for (const r of this.rigs) {
       this.scene.remove(r.root, r.shadow);
-      disposeTree(r.root);
+      trash.push(() => disposeTree(r.root));
     }
     if (this.items) {
-      this.scene.remove(this.items.group);
-      this.items.dispose();
+      const old = this.items;
+      this.scene.remove(old.group);
+      trash.push(() => old.dispose());
     }
     this.items = new ItemsView(race);
     this.scene.add(this.items.group);
@@ -210,6 +315,12 @@ export class GameView {
       const ch = characterById(k.character) ?? CHARACTERS[0];
       const player = k.slot >= 0 ? { label: PLAYER_LABELS[k.slot], color: PLAYER_COLORS[k.slot] } : null;
       const rig = buildKart(ch, k.body, player, k.slot >= 0 ? 1 + k.slot : 0);
+      const layer = KART_LAYER + k.index;
+      if (layer < 32) {
+        rig.root.traverse((o) => o !== rig.tag && o.layers.set(layer));
+        // The blob under it goes with it, or a kart left out at the lens would leave its shadow there.
+        rig.shadow.layers.set(layer);
+      }
       this.scene.add(rig.root, rig.shadow);
       return rig;
     });
@@ -228,7 +339,56 @@ export class GameView {
     this.relayout();
     // Compiled while drawing into the frame's own target, so the variants match the ones rendering asks for.
     this.post.begin();
+    this.scene.updateMatrixWorld();
     this.fx.warm(this.renderer, this.scene, this.cinema);
+    for (const t of trash) t();
+    this.lastPrograms = this.renderer.info.programs?.length ?? 0;
+  }
+
+  /**
+   * Fit the sun's shadow map to the table as the sun sees it, rather than a square round its widest side: the
+   * same texels land closer together. Its size follows, so a texel stays about SHADOW_TEXEL across.
+   */
+  private fitShadow(track: Track) {
+    const b = track.bounds;
+    const y0 = track.def.floorY;
+    const cam = this.sun.shadow.camera;
+    const M = 15;
+    // The table seen from the sun, turned whichever way packs it tightest into the map (three keeps `up`).
+    let best: number[] | null = null;
+    let bestUp = UP;
+    for (const up of SHADOW_UPS) {
+      cam.up.copy(up);
+      cam.position.copy(this.sun.position);
+      cam.lookAt(this.sun.target.position);
+      cam.updateMatrixWorld();
+      const box = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const x of [b.minX - M, b.maxX + M])
+        for (const z of [b.minZ - M, b.maxZ + M])
+          for (const y of [y0 - 2, y0 + 30]) {
+            tmpV.set(x, y, z).applyMatrix4(cam.matrixWorldInverse);
+            box[0] = Math.min(box[0], tmpV.x);
+            box[1] = Math.max(box[1], tmpV.x);
+            box[2] = Math.min(box[2], tmpV.y);
+            box[3] = Math.max(box[3], tmpV.y);
+          }
+      if (!best || (box[1] - box[0]) * (box[3] - box[2]) < (best[1] - best[0]) * (best[3] - best[2])) {
+        best = box;
+        bestUp = up;
+      }
+    }
+    cam.up.copy(bestUp);
+    const [minX, maxX, minY, maxY] = best!;
+    cam.left = minX;
+    cam.right = maxX;
+    cam.bottom = minY;
+    cam.top = maxY;
+    cam.near = 10;
+    cam.far = 900;
+    cam.updateProjectionMatrix();
+    const size = (extent: number) => Math.min(MAX_SHADOW, Math.max(512, Math.ceil(extent / SHADOW_TEXEL / 64) * 64));
+    this.sun.shadow.mapSize.set(size(maxX - minX), size(maxY - minY));
+    this.shadowTexel = Math.max((maxX - minX) / this.sun.shadow.mapSize.x, (maxY - minY) / this.sun.shadow.mapSize.y);
   }
 
   private bakeEnvironment(th: Theme) {
@@ -238,12 +398,12 @@ export class GameView {
   }
 
   private makeChase(kart: number): Chase {
-    const camera = new THREE.PerspectiveCamera(68, 1, 0.3, 2400);
+    const camera = new THREE.PerspectiveCamera(62, 1, 0.3, 2400);
     const k = this.race!.karts[kart];
     // Each player's camera hides only their own tag.
     camera.layers.enableAll();
     if (k.slot >= 0) camera.layers.disable(1 + k.slot);
-    return { camera, kart, follow: kart, heading: k.h, pos: new THREE.Vector3(), look: new THREE.Vector3(), shake: 0, fov: 68, roll: 0, dip: 0, dipV: 0, blur: 0, init: false };
+    return { camera, kart, follow: kart, heading: k.h, pos: new THREE.Vector3(), look: new THREE.Vector3(), shake: 0, fov: 62, roll: 0, dip: 0, dipV: 0, blur: 0, reach: 1, edgeY: k.y, init: false };
   }
 
   /** Point player `kart`'s camera at `target` (their own kart to go back). A change of kart is a cut. */
@@ -304,6 +464,23 @@ export class GameView {
     this.shadowsDirty = true;
   }
 
+  /** What the last frame cost, for measuring in a browser (window.__RACEOFF_DIAG__). */
+  diag() {
+    const { render, memory, programs } = this.renderer.info;
+    const n = Math.min(this.ringN, this.ring.length);
+    const frames = Array.from(this.ring.subarray(0, n)).sort((a, b) => a - b);
+    const post = this.post.state;
+    return {
+      calls: render.calls, triangles: render.triangles, geometries: memory.geometries, textures: memory.textures,
+      programs: programs?.length ?? 0, pixelRatio: this.pixelRatio, highQuality: this.highQuality, viewports: this.rects.length,
+      frameMs: { n, p50: pct(frames, 0.5), p95: pct(frames, 0.95), max: pct(frames, 1), over50: frames.filter((x) => x > 50).length },
+      compiles: { total: this.compiledTotal, frames: this.compileFrames, lastFrame: this.lastCompileFrame, frame: this.frameNo },
+      buffer: `${post.width}x${post.height}`, msaa: post.msaa, dof: post.dof,
+      shadow: { size: `${this.sun.shadow.mapSize.x}x${this.sun.shadow.mapSize.y}`, texelCm: +(this.shadowTexel * 100).toFixed(1), drawn: this.shadowDrawn },
+      refreshMs: Number.isFinite(this.refreshMs) ? +this.refreshMs.toFixed(1) : null, pinned: !!(this.pin.quality || this.pin.pr),
+    };
+  }
+
   /** The last resort for slow machines (and headless tests): no depth of field, multisampling or moving shadows. */
   dropQuality() {
     this.highQuality = false;
@@ -341,6 +518,8 @@ export class GameView {
     const h = Math.max(1, this.canvas.clientHeight);
     this.width = w;
     this.height = h;
+    if (!this.pin.pr) this.pixelRatio = Math.min(this.pixelRatio, this.maxRatio());
+    roomUniforms.uPixelRatio.value = this.pixelRatio;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(w, h, false);
     this.post.setSize(w, h, this.pixelRatio);
@@ -421,6 +600,7 @@ export class GameView {
 
   render(alpha: number, dt: number) {
     this.time += dt;
+    this.renderer.info.reset();
     if (this.sizeDirty) this.applySize();
     const race = this.race;
     if (!race || !this.world) {
@@ -432,16 +612,29 @@ export class GameView {
     }
     this.world.update(race.time, dt, race.hazards);
     this.items!.update(race, alpha, dt);
-    shieldUniforms.uTime.value = this.time;
+    shieldUniforms.uTime.value = this.time % SHIELD_PERIOD;
     race.karts.forEach((k, i) => this.updateKart(k, this.rigs[i], alpha, dt));
     this.fx.update(dt);
     this.skids.update(dt);
+    if (this.headlights) this.headlights.instanceMatrix.needsUpdate = true;
+    this.scene.updateMatrixWorld();
 
-    // The sun's shadows are drawn once per frame, shared by every viewport.
+    // The sun's shadows are drawn once per frame, shared by every viewport. three draws the map with the first
+    // render's camera and skips what that camera's layers leave out, so a chase camera hiding a kart at its lens
+    // would take that kart's shadow out of every view: it is drawn on its own, by a camera that sees every layer
+    // and looks at nothing (only the shadow pass costs anything).
     this.post.begin();
+    const shadows = this.shadowsDirty || this.highQuality;
+    if (shadows) {
+      this.post.viewport(ONE_PIXEL);
+      this.renderer.shadowMap.needsUpdate = true;
+      this.renderer.render(this.scene, shadowOnly);
+      this.renderer.shadowMap.needsUpdate = false;
+    }
+    this.shadowDrawn = shadows;
+    this.shadowsDirty = false;
     const views = this.postViews;
     views.length = 0;
-    let first = true;
     const pr = this.pixelRatio;
     for (const r of this.rects) {
       const cam = this.cameraFor(r, dt);
@@ -458,14 +651,61 @@ export class GameView {
       cam.aspect = r.w / r.h;
       cam.updateProjectionMatrix();
       this.fx.setScale(r.h * pr, cam.fov);
-      // Karts and hazards cast real shadows, so the map is redrawn each frame; slow machines keep it for scenery only.
-      this.renderer.shadowMap.needsUpdate = first && (this.shadowsDirty || this.highQuality);
-      if (first) this.shadowsDirty = false;
-      first = false;
+      if (r.kart >= 0) this.hideNear(cam, r.kart);
       this.renderer.render(this.scene, cam);
     }
     this.post.end(views, this.time);
+    this.count(dt);
     this.adapt(dt);
+  }
+
+  /**
+   * Leave out of this chase view any other kart that would fill it: one right at the lens, or one sitting between
+   * the lens and the kart being followed, close enough to hide it (karts bunched on the grid, a pack in a bend).
+   */
+  private hideNear(cam: THREE.Camera, viewer: number) {
+    const follow = this.chases.find((c) => c.kart === viewer)?.follow ?? viewer;
+    const f = this.rigs[follow]?.root.position;
+    // Along the ground from the lens to the followed kart.
+    const fx = f ? f.x - cam.position.x : 0;
+    const fz = f ? f.z - cam.position.z : 0;
+    const fLen = Math.hypot(fx, fz) || 1;
+    for (let i = 0; i < this.rigs.length && KART_LAYER + i < 32; i++) {
+      const p = this.rigs[i].root.position;
+      const dx = p.x - cam.position.x;
+      const dy = p.y + 0.9 - cam.position.y;
+      const dz = p.z - cam.position.z;
+      let hide = false;
+      if (i !== follow) {
+        if (dx * dx + dy * dy + dz * dz < NEAR_CAMERA * NEAR_CAMERA) hide = true;
+        else if (f) {
+          const along = (dx * fx + dz * fz) / fLen;
+          const across = Math.abs(dx * fz - dz * fx) / fLen;
+          hide = along > 0 && along < Math.min(fLen - 1.2, NEAR_BLOCK) && across < 1.7;
+        }
+      }
+      if (hide) cam.layers.disable(KART_LAYER + i);
+      else cam.layers.enable(KART_LAYER + i);
+    }
+  }
+
+  /** Frame intervals and shader compiles, for diag(). */
+  private count(dt: number) {
+    this.frameNo++;
+    if (dt > 0) this.ring[this.ringN++ % this.ring.length] = dt * 1000;
+    const programs = this.renderer.info.programs?.length ?? 0;
+    if (programs > this.lastPrograms) {
+      this.compiledTotal += programs - this.lastPrograms;
+      this.compileFrames++;
+      this.lastCompileFrame = this.frameNo;
+    }
+    this.lastPrograms = programs;
+  }
+
+  /** The most the resolution may be: the screen's own, up to 1.5, and no more than MAX_PIXELS in all. */
+  private maxRatio() {
+    const area = Math.max(1, this.canvas.clientWidth * this.canvas.clientHeight);
+    return Math.max(0.5, Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(MAX_PIXELS / area)));
   }
 
   /**
@@ -473,18 +713,34 @@ export class GameView {
    * frames, not the time spent drawing, because a struggling graphics card shows up there and not here.
    */
   private adapt(dt: number) {
-    if (dt <= 0 || document.hidden) return;
+    if (this.pin.quality || this.pin.pr || dt <= 0 || document.hidden) return;
     this.frameTimes.push(dt * 1000);
     if (this.frameTimes.length < 60) return;
     const sorted = [...this.frameTimes].sort((a, b) => a - b);
     // The median, so one hitch (a tab switch, a garbage collection) does not count.
     const typical = sorted[Math.floor(sorted.length / 2)];
     this.frameTimes = [];
-    const max = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Frames all alike to within a millisecond or so are keeping the display's pace, whatever it is. The quickest
+    // such pace seen is the display's: a 30 Hz screen never shows anything quicker than 33 ms, and is not slow.
+    // (A machine that has never once kept up at 60 Hz looks the same, and is left at a steady 30 rather than blurred.)
+    if (sorted[54] - sorted[6] < 1.5) this.refreshMs = Math.min(this.refreshMs, typical);
+    const budget = Number.isFinite(this.refreshMs) ? Math.max(this.refreshMs, 16.4) : 1000 / 60;
+    const slow = typical > budget * 1.25;
+    const quick = typical < budget * 1.05;
+    const max = Math.min(this.maxRatio(), this.ceiling);
+    const now = performance.now();
     let next = this.pixelRatio;
-    if (typical > 21 && this.pixelRatio <= 0.75 && this.highQuality) return this.dropQuality();
-    if (typical > 21 && this.pixelRatio > 0.6) next = Math.max(0.6, this.pixelRatio - 0.15);
-    else if (typical < 17.5 && this.pixelRatio < max) next = Math.min(max, this.pixelRatio + 0.15);
+    if (slow && this.pixelRatio <= 0.75 && this.highQuality) return this.dropQuality();
+    if (slow && this.pixelRatio > 0.6) next = Math.max(0.6, this.pixelRatio - 0.15);
+    else if (quick && this.pixelRatio < max - 0.001 && now > this.holdUntil) next = Math.min(max, this.pixelRatio + 0.15);
+    if (next < this.pixelRatio) {
+      // Hold the lower size a while; one stepped down from twice is not tried again.
+      this.holdUntil = now + 10000;
+      const key = Math.round(this.pixelRatio * 100);
+      const times = (this.downFrom.get(key) ?? 0) + 1;
+      this.downFrom.set(key, times);
+      if (times >= 2) this.ceiling = Math.min(this.ceiling, next);
+    }
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.resize();
@@ -536,6 +792,19 @@ export class GameView {
     // Keep the camera above the ground it is over.
     const g = this.track!.grid.heightAt(want.x, want.z, this.track!.def.floorY);
     want.y = Math.max(want.y, g + 1.5);
+    // Scenery between the kart and the camera would hide the kart: come in past it (quickly), and rise a little to
+    // look over it, then ease back out once clear.
+    const reach = this.clearReach(kp.x, kp.z, want.x, want.z);
+    c.reach = c.init ? damp(c.reach, reach, reach < c.reach ? 16 : 2.5, dt) : reach;
+    if (c.reach < 0.999) {
+      want.x = kp.x + (want.x - kp.x) * c.reach;
+      want.z = kp.z + (want.z - kp.z) * c.reach;
+      want.y += (1 - c.reach) * 1.8;
+    }
+    // Off the edge: the camera stays at the edge and watches the kart drop, rather than diving after it into the
+    // table (or the bath) and showing their insides. The lift back up brings it along again.
+    if (k.grounded && k.respawnT === 0) c.edgeY = kp.y;
+    if (c.init && k.respawnT > 0 && kp.y < c.edgeY - 0.5) want.copy(c.pos);
     if (!c.init) {
       c.pos.copy(want);
       c.look.set(kp.x, kp.y + 1.4, kp.z);
@@ -563,7 +832,7 @@ export class GameView {
     }
     c.camera.position.copy(c.pos);
     c.camera.position.y += c.dip * 0.12;
-    if (c.shake > 0) {
+    if (c.shake > 0 && dt > 0) {
       c.shake = Math.max(0, c.shake - dt * 1.8);
       const s = c.shake * c.shake * 0.8;
       c.camera.position.x += (Math.random() - 0.5) * s;
@@ -575,6 +844,25 @@ export class GameView {
     c.roll = damp(c.roll, clamp(swing * 0.03, -0.07, 0.07), 5, dt);
     c.camera.rotateZ(c.roll);
     c.blur = damp(c.blur, k.rocket > 0 ? 1 : boost ? 0.6 : clamp((sp - 1) * 2, 0, 0.4), boost ? 8 : 3, dt);
+  }
+
+  /**
+   * The share of the line from the kart to where its camera wants to be that is clear of solid props. Walls are
+   * low and left out; props have no height in the physics, so any of them counts as tall enough to hide a kart.
+   */
+  private clearReach(x0: number, z0: number, x1: number, z1: number) {
+    const near = this.track!.query((x0 + x1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) / 2 + 1, (nearBuf.length = 0, nearBuf));
+    let props = 0;
+    for (const c of near) if (c.t !== 'seg' && colliderDistance(c, x0, z0) > 1) nearBuf[props++] = c;
+    if (!props) return 1;
+    const STEPS = 12;
+    for (let i = 1; i <= STEPS; i++) {
+      const t = i / STEPS;
+      const x = x0 + (x1 - x0) * t;
+      const z = z0 + (z1 - z0) * t;
+      for (let j = 0; j < props; j++) if (colliderDistance(nearBuf[j], x, z) < 0.8) return Math.max(0.3, (i - 1) / STEPS);
+    }
+    return 1;
   }
 
   /** How far a viewport stays sharp before the depth of field starts. */
@@ -603,30 +891,37 @@ export class GameView {
     const race = this.race!;
     const humans = race.karts.filter((k) => !k.cpu);
     const focus = humans.length ? humans : race.karts.filter((k) => k.place <= 3);
-    let cx = 0;
-    let cz = 0;
+    // Frame the box round everyone, across and along, by the lens and the screen's shape: a wide screen fits
+    // karts far apart side to side, and nobody at the edge of the table falls out of shot.
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
     let cy = 0;
     for (const k of focus) {
-      cx += k.x;
-      cz += k.z;
+      minX = Math.min(minX, k.x);
+      maxX = Math.max(maxX, k.x);
+      minZ = Math.min(minZ, k.z);
+      maxZ = Math.max(maxZ, k.z);
       cy += k.y;
     }
-    cx /= focus.length;
-    cz /= focus.length;
     cy /= focus.length;
-    let spread = 30;
-    for (const k of focus) spread = Math.max(spread, Math.hypot(k.x - cx, k.z - cz) + 18);
-    spread = Math.min(spread, 150);
-    const height = spread * 1.35 + 20;
-    const back = spread * 0.75 + 12;
-    const want = tmpV2.set(cx, cy + height, cz + back);
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+    const hx = Math.max(28, (maxX - minX) / 2 + 14);
+    const hz = Math.max(28, (maxZ - minZ) / 2 + 14);
+    const PITCH = 1.07; // looking about 61 degrees down
+    const tanV = Math.tan(THREE.MathUtils.degToRad(this.overview.fov / 2));
+    const tanH = tanV * Math.max(0.5, this.overview.aspect);
+    // The far side of the box looks smaller than the near side, hence the extra on the depth.
+    const dist = Math.min(300, Math.max(hx / tanH, (hz * Math.sin(PITCH) * 1.15) / tanV) + 8);
+    const want = tmpV2.set(cx, cy + dist * Math.sin(PITCH), cz + dist * Math.cos(PITCH));
     if (this.overviewPos.lengthSq() === 0) {
       this.overviewPos.copy(want);
       this.overviewLook.set(cx, cy, cz);
     }
     this.overviewPos.set(damp(this.overviewPos.x, want.x, 3, dt), damp(this.overviewPos.y, want.y, 2, dt), damp(this.overviewPos.z, want.z, 3, dt));
     this.overviewLook.set(damp(this.overviewLook.x, cx, 4, dt), damp(this.overviewLook.y, cy, 4, dt), damp(this.overviewLook.z, cz - 4, 4, dt));
-    this.overview.fov = 50;
     this.overview.position.copy(this.overviewPos);
     this.overview.lookAt(this.overviewLook);
   }
@@ -740,6 +1035,16 @@ export class GameView {
     const ss = clamp(1 - above / 12, 0.3, 1);
     rig.shadow.scale.set(ss, 1, ss);
 
+    if (this.headlights && k.index < this.headlights.count) {
+      // The pool of light ahead, on the ground under the kart; gone in the air, while carried back or hidden.
+      if (rig.root.visible && k.respawnT === 0 && !overVoid && above < 2.5) {
+        tmpV2.set(p.x + fwdX(h) * 4.9, ground + 0.15, p.z + fwdZ(h) * 4.9);
+        tmpQ.setFromAxisAngle(UP, h);
+        tmpM.compose(tmpV2, tmpQ, tmpV3.set(4.4, 1, 7.6));
+        this.headlights.setMatrixAt(k.index, tmpM);
+      } else this.headlights.setMatrixAt(k.index, HIDDEN);
+    }
+
     if (k.respawnT > 0) {
       for (let w = 0; w < 2; w++) this.skids.mark(k.index * 2 + w, 0, 0, 0, false);
       return;
@@ -777,6 +1082,10 @@ export class GameView {
     for (const r of this.rigs) disposeTree(r.root);
     if (this.podiumGroup) disposeTree(this.podiumGroup);
     this.envTarget?.dispose();
+    if (this.headlights) {
+      this.headlights.geometry.dispose();
+      (this.headlights.material as THREE.Material).dispose();
+    }
     this.post.dispose();
     this.renderer.dispose();
   }
