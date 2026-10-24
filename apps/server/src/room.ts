@@ -7,12 +7,12 @@
  * only ever speak for its own player, and only the VIP can change settings.
  */
 import {
-  BodyIdSchema, CharacterIdSchema, CHARACTERS, GiantMoveSchema, HAPTIC_KINDS, IDLE_STATUS, InputSchema, MAX_PLAYERS, MenuCommandSchema,
-  NameSchema, PickSchema, RaceReportSchema, RoomSettingsPatchSchema, RoomSettingsSchema,
-  type ClientToServerEvents, type GameStatus, type HapticKind, type Hud, type LiveRoomView, type PlayerInfo, type RoomSettings, type RoomView,
-  type ServerToClientEvents,
+  BodyIdSchema, CharacterIdSchema, CHARACTERS, GameStatusSchema, GiantMoveSchema, HAPTIC_KINDS, HudsSchema, IDLE_STATUS, InputSchema, MAX_PLAYERS,
+  MenuCommandSchema, NameSchema, PickSchema, RaceReportSchema, RoomSettingsPatchSchema, RoomSettingsSchema,
+  type ClientToServerEvents, type GameStatus, type LiveRoomView, type PlayerInfo, type RoomSettings, type RoomView, type ServerToClientEvents,
 } from '@raceoff/shared';
 import type { Server, Socket } from 'socket.io';
+import { z } from 'zod';
 import type { Records } from './records';
 import { log, randomId, randomToken, sha256, tokenMatches } from './util';
 
@@ -32,19 +32,27 @@ interface Seat {
   joinedAt: number;
 }
 
-/** What survives a server restart: everything but the sockets. */
-export interface RoomSnapshot {
-  code: string;
-  keyHash: string;
-  settings: RoomSettings;
-  status: GameStatus;
-  seats: { info: PlayerInfo; tokenHash: string; joinedAt: number }[];
-  localCount: number;
-  createdAt?: number;
-  updatedAt: number;
-}
-
-const HAPTICS: readonly HapticKind[] = HAPTIC_KINDS;
+/**
+ * What survives a server restart: everything but the sockets and the race, which the TV starts again from its
+ * lobby. Checked on loading; settings are checked on their own, so a room with outdated ones still comes back.
+ */
+export const RoomSnapshotSchema = z.object({
+  code: z.string(),
+  keyHash: z.string(),
+  settings: z.unknown(),
+  seats: z.array(z.object({
+    info: z.object({
+      id: z.string(), name: z.string(), slot: z.number().int().min(0).max(MAX_PLAYERS - 1), character: z.string(), body: z.string(),
+      ready: z.boolean(), connected: z.boolean(), local: z.boolean(),
+    }),
+    tokenHash: z.string(),
+    joinedAt: z.number(),
+  })),
+  localCount: z.number(),
+  createdAt: z.number().optional(),
+  updatedAt: z.number(),
+});
+export type RoomSnapshot = z.infer<typeof RoomSnapshotSchema>;
 
 export class Room {
   private seats = new Map<string, Seat>();
@@ -53,6 +61,10 @@ export class Room {
   private status: GameStatus = IDLE_STATUS;
   private pending = false;
   private localCount = 0;
+  /** Names of the players when the race under way began; null once its result is in. One report per race. */
+  private racing: Set<string> | null = null;
+  /** Whether a TV has ever attached: a room nobody opened on a TV expires much sooner. */
+  hadTv = false;
   createdAt = Date.now();
   updatedAt = Date.now();
   /** When the TV was last seen, for expiry. */
@@ -91,18 +103,22 @@ export class Room {
 
   snapshot(): RoomSnapshot {
     return {
-      code: this.code, keyHash: this.keyHash, settings: this.settings, status: this.status, localCount: this.localCount,
+      code: this.code, keyHash: this.keyHash, settings: this.settings, localCount: this.localCount,
       createdAt: this.createdAt, updatedAt: this.updatedAt,
       seats: [...this.seats.values()].map((s) => ({ info: s.info, tokenHash: s.tokenHash, joinedAt: s.joinedAt })),
     };
   }
 
-  /** A room brought back after a restart. Phones and the TV reconnect on their own with what they kept. */
+  /**
+   * A room brought back after a restart. Phones and the TV reconnect on their own with what they kept; until the
+   * TV says otherwise the room is in its lobby, so no phone shows a race that has gone.
+   */
   static restore(io: AppServer, snap: RoomSnapshot, records: Records, defaults: RoomSettings): Room {
     const settings = RoomSettingsSchema.safeParse(snap.settings);
     const room = new Room(io, snap.code, snap.keyHash, records, settings.success ? settings.data : defaults);
-    room.status = { ...IDLE_STATUS, ...snap.status };
     room.localCount = snap.localCount;
+    // Its TV may just not be back yet: it gets the usual idle time.
+    room.hadTv = true;
     room.createdAt = snap.createdAt ?? snap.updatedAt;
     room.updatedAt = snap.updatedAt;
     room.tvSeenAt = Date.now();
@@ -181,14 +197,11 @@ export class Room {
     this.broadcastRoom();
   }
 
-  /** The first player to have joined with a phone runs the menus. */
+  /** The first player to have joined with a phone runs the menus; while that phone is away, the next one here does. */
   private get vip(): string | null {
-    let best: Seat | null = null;
-    for (const s of this.seats.values()) {
-      if (s.info.local) continue;
-      if (!best || s.joinedAt < best.joinedAt) best = s;
-    }
-    return best?.info.id ?? null;
+    const phones = [...this.seats.values()].filter((s) => !s.info.local);
+    phones.sort((a, b) => Number(b.info.connected) - Number(a.info.connected) || a.joinedAt - b.joinedAt);
+    return phones[0]?.info.id ?? null;
   }
 
   view(): RoomView {
@@ -215,26 +228,31 @@ export class Room {
       this.tv.disconnect(true);
     }
     this.tv = socket;
+    this.hadTv = true;
     this.tvSeenAt = Date.now();
     void socket.join(this.code);
     socket.emit('room', this.view());
     socket.emit('status', this.status);
 
     socket.on('tv:settings', (patch) => this.applySettings(patch));
-    socket.on('tv:status', (status) => {
-      if (!status || typeof status !== 'object' || typeof status.phase !== 'string') return;
+    socket.on('tv:status', (raw) => {
+      const parsed = GameStatusSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const status = parsed.data;
+      if (status.phase === 'race' && this.status.phase !== 'race') this.racing = new Set([...this.seats.values()].map((s) => s.info.name));
       this.status = status;
       this.touch();
       socket.to(this.code).emit('status', status);
       // Back in the lobby, everyone readies up afresh.
       if (status.phase === 'lobby') this.resetReady();
     });
-    socket.on('tv:hud', (huds) => {
-      if (!huds || typeof huds !== 'object') return;
-      for (const [pid, hud] of Object.entries(huds)) this.seats.get(pid)?.socket?.emit('hud', hud as Hud);
+    socket.on('tv:hud', (raw) => {
+      const huds = HudsSchema.safeParse(raw);
+      if (!huds.success) return;
+      for (const [pid, hud] of Object.entries(huds.data)) this.seats.get(pid)?.socket?.emit('hud', hud);
     });
     socket.on('tv:haptic', (msg) => {
-      if (!msg || !HAPTICS.includes(msg.kind)) return;
+      if (!msg || !HAPTIC_KINDS.includes(msg.kind)) return;
       this.seats.get(msg.pid)?.socket?.emit('haptic', msg.kind);
     });
     socket.on('tv:kick', (pid) => {
@@ -242,8 +260,8 @@ export class Room {
     });
     socket.on('tv:addLocal', (ack) => {
       if (typeof ack !== 'function') return;
-      this.localCount++;
-      const res = this.join(`Keys ${this.localCount}`, true);
+      const res = this.join(`Keys ${this.localCount + 1}`, true);
+      if (!('error' in res)) this.localCount++;
       ack('error' in res ? { ok: false, error: res.error } : { ok: true, data: { id: res.playerId } });
     });
     socket.on('tv:pick', (msg) => {
@@ -267,7 +285,14 @@ export class Room {
       if (typeof ack !== 'function') return;
       const parsed = RaceReportSchema.safeParse(report);
       if (!parsed.success) return ack({ ok: false, error: 'bad report' });
-      ack({ ok: true, data: this.records.report(parsed.data) });
+      // The TV is trusted with the times, but only for a race it ran, once, and for the players who were in it.
+      const racing = this.racing;
+      this.racing = null;
+      if (!racing) return ack({ ok: false, error: 'no race to report' });
+      const { results, cupWinner } = parsed.data;
+      const winner = cupWinner !== null && racing.has(cupWinner) ? cupWinner : null;
+      // Each name once: deleting it as it is used turns away a second result under the same name.
+      ack({ ok: true, data: this.records.report({ ...parsed.data, results: results.filter((r) => racing.delete(r.name)), cupWinner: winner }) });
     });
     socket.on('disconnect', () => {
       if (this.tv?.id !== socket.id) return;

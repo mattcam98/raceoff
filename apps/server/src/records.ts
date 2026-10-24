@@ -6,14 +6,22 @@
  * any length. Names are how players are told apart: the same name on another
  * night is the same person, which is what a living room expects.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PlayerTally, RaceReport, RecordEntry, RecordNews, RecordsView, TrackRecords } from '@raceoff/shared';
-import { log } from './util';
+import { z } from 'zod';
+import { log, readJsonFile, writeAtomic } from './util';
 
 const MAX_RACES = 10;
-const MAX_PLAYERS = 200;
+const MAX_TALLY = 200;
 const SAVE_DELAY_MS = 500;
+
+const EntrySchema = z.object({ name: z.string(), character: z.string(), time: z.number(), at: z.number() });
+/** The whole file is checked on loading, so a mangled entry can never throw later, in the middle of a race. */
+const RecordsFileSchema: z.ZodType<RecordsView> = z.object({
+  tracks: z.record(z.string(), z.object({ bestLap: EntrySchema.nullable(), races: z.array(EntrySchema) })),
+  players: z.array(z.object({ name: z.string(), races: z.number(), wins: z.number(), podiums: z.number(), cups: z.number() })),
+});
 
 export class Records {
   private data: RecordsView = { tracks: {}, players: [] };
@@ -27,12 +35,7 @@ export class Records {
     if (!dir) return new Records(null);
     await mkdir(dir, { recursive: true });
     const r = new Records(join(dir, 'records.json'));
-    try {
-      const raw = JSON.parse(await readFile(r.file!, 'utf8')) as RecordsView;
-      if (raw && typeof raw === 'object' && raw.tracks && Array.isArray(raw.players)) r.data = raw;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log.warn('could not read records, starting afresh', { err: String(err) });
-    }
+    r.data = (await readJsonFile(r.file!, RecordsFileSchema)) ?? r.data;
     return r;
   }
 
@@ -65,11 +68,11 @@ export class Records {
       t.races++;
       if (res.place === 1) t.wins++;
       if (res.place <= 3) t.podiums++;
-      if (res.bestLap !== null && res.bestLap > 1 && (!track.bestLap || res.bestLap < track.bestLap.time)) {
+      if (res.bestLap !== null && (!track.bestLap || res.bestLap < track.bestLap.time)) {
         track.bestLap = { name: res.name, character: res.character, time: res.bestLap, at: now };
         news.push({ kind: 'lap', track: r.track, name: res.name, time: res.bestLap });
       }
-      if (counts && res.time !== null && res.time > 5) {
+      if (counts && res.time !== null) {
         const entry: RecordEntry = { name: res.name, character: res.character, time: res.time, at: now };
         const wasBest = !track.races.length || res.time < track.races[0].time;
         track.races.push(entry);
@@ -80,7 +83,7 @@ export class Records {
     }
     if (r.cupWinner) this.tally(r.cupWinner).cups++;
     this.data.players.sort((a, b) => b.cups - a.cups || b.wins - a.wins || b.podiums - a.podiums || a.name.localeCompare(b.name));
-    this.data.players.length = Math.min(this.data.players.length, MAX_PLAYERS);
+    this.data.players.length = Math.min(this.data.players.length, MAX_TALLY);
     // A lap record set twice in one race (two players) only announces the one that stands.
     const finalLap = news.filter((n) => n.kind === 'lap').pop();
     const result = news.filter((n) => n.kind !== 'lap').concat(finalLap ? [finalLap] : []);
@@ -126,19 +129,11 @@ export class Records {
     }, SAVE_DELAY_MS);
   }
 
-  /** Write to a temporary file and rename it over the old one, so a crash mid-write never leaves half a file. */
   async save() {
     if (!this.file) return;
     const file = this.file;
     const body = JSON.stringify(this.data);
-    this.saving = this.saving.then(async () => {
-      try {
-        await writeFile(`${file}.tmp`, body);
-        await rename(`${file}.tmp`, file);
-      } catch (err) {
-        log.error('could not save records', { err });
-      }
-    });
+    this.saving = this.saving.then(() => writeAtomic(file, body)).catch((err) => log.error('could not save records', { err }));
     return this.saving;
   }
 

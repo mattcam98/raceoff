@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import type { AdminView, ClientToServerEvents, RecordsView, RelayedInput, RoomView, ServerToClientEvents } from '@raceoff/shared';
+import { IDLE_STATUS, type AdminView, type ClientToServerEvents, type GameStatus, type RecordsView, type RelayedInput, type RoomView, type ServerToClientEvents } from '@raceoff/shared';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp, type App } from './app';
@@ -57,6 +57,15 @@ async function room() {
   const tv = await open({ role: 'tv', code: body.code, key: body.key });
   return { ...body, tv };
 }
+
+/** The TV starting a race: the room takes one report for it. */
+const startRace = (tv: Client) => {
+  tv.emit('tv:status', { ...IDLE_STATUS, phase: 'intro', track: 'bath' });
+  tv.emit('tv:status', { ...IDLE_STATUS, phase: 'race', track: 'bath' });
+};
+type Report = Parameters<ClientToServerEvents['tv:report']>[0];
+const sendReport = (tv: Client, report: Report) => new Promise<{ ok: boolean; data?: unknown[] }>((resolve) => tv.emit('tv:report', report, resolve));
+const records = async () => (await (await fetch(`${base}/api/records`)).json()) as RecordsView;
 
 describe('rooms', () => {
   it('creates a room and lets players join with a name', async () => {
@@ -183,16 +192,139 @@ describe('play', () => {
   });
 
   it('keeps race records and reports the ones broken', async () => {
-    const { tv } = await room();
-    const report = (time: number) =>
-      new Promise<unknown[]>((resolve) =>
-        tv.emit('tv:report', { track: 'bath', laps: 3, cc: 100, results: [{ name: 'Ace', character: 'zip', place: 1, time, bestLap: time / 3 }], cupWinner: null }, (res) => resolve(res.data ?? [])),
-      );
+    const { code, tv } = await room();
+    await post(`/api/rooms/${code}/join`, { name: 'Ace' });
+    const report = async (time: number) => {
+      startRace(tv);
+      const res = await sendReport(tv, { track: 'bath', laps: 3, cc: 100, results: [{ name: 'Ace', character: 'zip', place: 1, time, bestLap: time / 3 }], cupWinner: null });
+      return res.data ?? [];
+    };
     expect(await report(90_000)).toHaveLength(2);
     expect(await report(95_000)).toHaveLength(0);
-    const records = (await (await fetch(`${base}/api/records`)).json()) as RecordsView;
-    expect(records.tracks.bath.races[0].time).toBe(90_000);
-    expect(records.players.find((p: { name: string }) => p.name === 'Ace')).toMatchObject({ races: 2, wins: 2 });
+    const view = await records();
+    expect(view.tracks.bath.races[0].time).toBe(90_000);
+    expect(view.players.find((p: { name: string }) => p.name === 'Ace')).toMatchObject({ races: 2, wins: 2 });
+  });
+
+  it('takes one report per race, only for the room’s players, and no impossible times', async () => {
+    const { code, tv } = await room();
+    await post(`/api/rooms/${code}/join`, { name: 'Fox' });
+    const result = (name: string, time = 100_000, bestLap: number | null = 32_000) => ({ name, character: 'zip' as const, place: 1, time, bestLap });
+    const report = (results: Report['results'], cupWinner: string | null = null) => sendReport(tv, { track: 'desk', laps: 3, cc: 150, results, cupWinner });
+
+    // No race under way.
+    expect((await report([result('Fox')])).ok).toBe(false);
+    // Too fast: a lap under ten seconds, or three laps in twenty.
+    startRace(tv);
+    expect((await report([result('Fox', 100_000, 5_000)])).ok).toBe(false);
+    startRace(tv);
+    expect((await report([result('Fox', 20_000, null)])).ok).toBe(false);
+    // A name not in the room, twice the same name, a cup for a stranger: only Fox's one result counts.
+    startRace(tv);
+    expect((await report([result('Fox'), result('Fox', 99_000), result('Ghost', 60_000)], 'Ghost')).ok).toBe(true);
+    // A second report for the same race.
+    expect((await report([result('Fox', 61_000)])).ok).toBe(false);
+
+    const view = await records();
+    expect(view.players.find((p) => p.name === 'Fox')).toMatchObject({ races: 1, cups: 0 });
+    expect(view.players.some((p) => p.name === 'Ghost')).toBe(false);
+    expect(view.tracks.desk.races.map((r) => r.time)).toEqual([100_000]);
+  });
+
+  it('parses the TV’s status: a malformed or oversized one never reaches the phones', async () => {
+    const { code, tv } = await room();
+    const join = await post<{ token: string }>(`/api/rooms/${code}/join`, { name: 'Pip' });
+    const phone = await open({ role: 'player', code, token: join.body.token });
+    const seen: string[] = [];
+    phone.on('status', (s) => seen.push(s.phase));
+    const standing = { id: 'cpu:0', name: 'Abcdefghijkl', character: 'zip', cpu: true, place: 1, time: 95_123.456, bestLap: 31_234.567, points: 15, total: 45 };
+    tv.emit('tv:status', { ...IDLE_STATUS, phase: 'boom' } as never);
+    tv.emit('tv:status', { ...IDLE_STATUS, phase: 'results', standings: Array(9).fill(standing) });
+    tv.emit('tv:status', { ...IDLE_STATUS, phase: 'results', track: 'x'.repeat(40) });
+    // The largest a real one gets: eight racers, every record broken.
+    const full: GameStatus = {
+      ...IDLE_STATUS, phase: 'results', track: 'breakfast', standings: Array(8).fill(standing), racers: ['abcdefgh', 'abcdefgh', 'abcdefgh', 'abcdefgh'],
+      records: Array(5).fill({ kind: 'race', track: 'breakfast', name: 'Abcdefghijkl', time: 95_123.456 }),
+    };
+    expect(JSON.stringify(full).length).toBeLessThan(4 * 1024);
+    const got = next(phone, 'status', (s) => s.phase === 'results');
+    tv.emit('tv:status', full);
+    expect((await got)[0]).toEqual(full);
+    expect(seen).toEqual(['results']);
+    // Past the message size limit the TV is cut off.
+    const gone = new Promise((resolve) => tv.once('disconnect', resolve));
+    tv.emit('tv:status', { ...IDLE_STATUS, track: 'x'.repeat(20_000) });
+    await gone;
+  });
+
+  it('relays four giants’ dashboards in one message, well inside the size limit', async () => {
+    const { code, tv } = await room();
+    const ids: string[] = [];
+    const phones: Client[] = [];
+    for (const name of ['A', 'B', 'C', 'D']) {
+      const j = await post<{ token: string; playerId: string }>(`/api/rooms/${code}/join`, { name });
+      ids.push(j.body.playerId);
+      phones.push(await open({ role: 'player', code, token: j.body.token }));
+    }
+    const target = { k: 7, name: 'Abcdefghijkl', character: 'duckie', place: 8, cpu: true, slot: -1, safe: false };
+    const hud = {
+      place: 0, racers: 8, lap: 0, laps: 3, item: null, count: 0, rolling: false, finished: false, time: null, charge: 0, stage: 'go', stunned: false, wrongWay: false,
+      giant: { charge: 2.345678, targets: Array(8).fill(target), endsIn: 12 },
+    } as const;
+    const huds = Object.fromEntries(ids.map((id) => [id, hud]));
+    expect(JSON.stringify(huds).length).toBeLessThan(8 * 1024);
+    const got = Promise.all(phones.map((p) => next(p, 'hud')));
+    tv.emit('tv:hud', { ...huds, [ids[0]]: { ...hud, item: 'laser' } } as never);
+    tv.emit('tv:hud', huds);
+    for (const [h] of await got) expect(h).toEqual(hud);
+  });
+
+  it('gives the menus to a phone that is here when the first one is not', async () => {
+    const { code, tv } = await room();
+    const a = await post<{ token: string; playerId: string }>(`/api/rooms/${code}/join`, { name: 'Away' });
+    const b = await post<{ token: string; playerId: string }>(`/api/rooms/${code}/join`, { name: 'Here' });
+    const seen = next(tv, 'room', (r) => r.vip === b.body.playerId);
+    await open({ role: 'player', code, token: b.body.token });
+    await seen;
+    const back = next(tv, 'room', (r) => r.vip === a.body.playerId);
+    await open({ role: 'player', code, token: a.body.token });
+    await back;
+  });
+
+  it('numbers keyboard players on without a gap after a full room turns one away', async () => {
+    const { tv } = await room();
+    const add = () => new Promise<{ ok: boolean; data?: { id: string } }>((resolve) => tv.emit('tv:addLocal', resolve));
+    const added = [];
+    for (let i = 0; i < 4; i++) added.push((await add()).data!.id);
+    expect((await add()).ok).toBe(false);
+    tv.emit('tv:kick', added[1]);
+    const seen = next(tv, 'room', (r) => r.players.some((p) => p.name === 'Keys 5'));
+    expect((await add()).ok).toBe(true);
+    await seen;
+  });
+});
+
+describe('limits', () => {
+  it('closes a room no TV ever opened after two minutes, and not one with a TV', async () => {
+    const lonely = (await post<{ code: string }>('/api/rooms')).body.code;
+    const { code } = await room();
+    for (const c of [lonely, code]) app.rooms.get(c)!.createdAt -= 3 * 60_000;
+    app.sweep();
+    expect(app.rooms.has(lonely)).toBe(false);
+    expect(app.rooms.has(code)).toBe(true);
+  });
+
+  it('rate-limits looking room codes up', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 25; i++) statuses.push((await fetch(`${base}/api/rooms/ZZZZ`, { headers: { 'x-forwarded-for': '10.8.0.1' } })).status);
+    expect(statuses.slice(0, 20).every((s) => s === 404)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
+  });
+
+  it('refuses to be framed by another site', async () => {
+    const res = await fetch(`${base}/api/health`);
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
   });
 });
 
@@ -213,12 +345,20 @@ describe('restarts', () => {
     const joined = (await (await fetch(`${first.url}/api/rooms/${made.code}/join`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Kim' }),
     })).json()) as { token: string };
+    // Mid-race when the server stops.
+    const tv: Client = connect(first.url, { transports: ['websocket'], auth: { role: 'tv', code: made.code, key: made.key }, reconnection: false });
+    await new Promise<void>((r) => tv.on('connect', r));
+    tv.emit('tv:status', { ...IDLE_STATUS, phase: 'race', track: 'bath' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(first.a.rooms.get(made.code)!.summary().phase).toBe('race');
     await first.a.close();
 
     const second = await start();
     try {
       const info = (await (await fetch(`${second.url}/api/rooms/${made.code}`)).json()) as { players: number };
       expect(info.players).toBe(1);
+      // Back in the lobby until the TV says where the race is: no phone is shown one that has gone.
+      expect(second.a.rooms.get(made.code)!.summary().phase).toBe('lobby');
       const ok = (auth: Record<string, string>) =>
         new Promise<boolean>((resolve) => {
           const s: Client = connect(second.url, { transports: ['websocket'], auth, reconnection: false });
@@ -229,6 +369,34 @@ describe('restarts', () => {
       expect(await ok({ role: 'player', code: made.code, token: joined.token })).toBe(true);
     } finally {
       await second.a.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('saved files', () => {
+  it('moves an unreadable or malformed file aside and starts afresh', async () => {
+    const { mkdtemp, readdir, readFile, rm, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = await mkdtemp(join(tmpdir(), 'raceoff-'));
+    const records = '{"tracks":{},"players":[{"name":5}]}';
+    await writeFile(join(dir, 'records.json'), records);
+    await writeFile(join(dir, 'rooms.json'), '[{"code":');
+    const a = await createApp(loadConfig({ DATA_DIR: dir, LOG_LEVEL: 'error' } as NodeJS.ProcessEnv));
+    try {
+      await new Promise<void>((r) => a.server.listen(0, r));
+      const url = `http://127.0.0.1:${(a.server.address() as AddressInfo).port}`;
+      expect(await (await fetch(`${url}/api/records`)).json()).toEqual({ tracks: {}, players: [] });
+      expect(a.rooms.size).toBe(0);
+      const files = await readdir(dir);
+      const bad = files.find((f) => f.startsWith('records.json.bad-'));
+      expect(bad).toBeDefined();
+      expect(await readFile(join(dir, bad!), 'utf8')).toBe(records);
+      expect(files.some((f) => f.startsWith('rooms.json.bad-'))).toBe(true);
+      expect(files).not.toContain('records.json');
+    } finally {
+      await a.close();
       await rm(dir, { recursive: true, force: true });
     }
   });

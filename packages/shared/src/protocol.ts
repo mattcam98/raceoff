@@ -4,8 +4,8 @@
  * The TV runs the race. The server keeps the room (who is in it, what they
  * picked, the race settings) and relays: phone inputs go to the TV, the TV's
  * race status goes to every phone, and each phone gets its own dashboard.
- * Messages from phones are parsed with the schemas below before anything
- * reads them.
+ * Messages from phones and the TV are parsed with the schemas below before
+ * anything reads them.
  */
 import { z } from 'zod';
 import { BODIES, CHARACTERS, CUPS, ITEMS, MAX_PLAYERS, MAX_RACERS, TRACKS } from './roster';
@@ -92,7 +92,8 @@ export interface RoomView {
 
 // ---------------------------------------------------------------- race status (TV → everyone)
 
-export type Phase = 'lobby' | 'intro' | 'race' | 'results' | 'standings' | 'podium';
+export const PHASES = ['lobby', 'intro', 'race', 'results', 'standings', 'podium'] as const;
+export type Phase = (typeof PHASES)[number];
 
 export interface Standing {
   /** Player id, or `cpu:N` for a computer racer. */
@@ -264,6 +265,9 @@ export interface RecordNews {
   time: number;
 }
 
+/** Floor for a lap: no real one gets near it (the fastest take about half a minute), so made-up times are refused. */
+export const MIN_LAP_MS = 10_000;
+
 export const RaceReportSchema = z.object({
   track: TrackIdSchema,
   laps: z.number().int().min(1).max(5),
@@ -276,14 +280,55 @@ export const RaceReportSchema = z.object({
         character: CharacterIdSchema,
         place: z.number().int().min(1).max(MAX_RACERS),
         time: z.number().nullable(),
-        bestLap: z.number().nullable(),
+        bestLap: z.number().min(MIN_LAP_MS).nullable(),
       }),
     )
     .max(MAX_PLAYERS),
   /** Set on the last race of a cup: the name of the human who won it, if one did. */
   cupWinner: z.string().max(NAME_MAX).nullable(),
-});
+}).refine((r) => r.results.every((x) => x.time === null || x.time >= r.laps * MIN_LAP_MS), 'race time too short');
 export type RaceReport = z.infer<typeof RaceReportSchema>;
+
+// ---------------------------------------------------------------- TV messages
+
+// The TV holds the room's key, but what it sends is parsed all the same: the phones read it, and a bound on every
+// list and string keeps each message small. Typed against the interfaces above so the two cannot drift apart.
+const label = z.string().max(32);
+const timeOrNull = z.number().nullable();
+
+export const GameStatusSchema: z.ZodType<GameStatus> = z.object({
+  phase: z.enum(PHASES),
+  track: label.nullable(),
+  raceIndex: z.number(),
+  raceCount: z.number(),
+  standings: z
+    .array(z.object({
+      id: label, name: label, character: label, cpu: z.boolean(), place: z.number(), time: timeOrNull, bestLap: timeOrNull, points: z.number(), total: z.number(),
+    }))
+    .max(MAX_RACERS),
+  records: z.array(z.object({ kind: z.enum(['lap', 'race']), track: label, name: label, time: z.number() })).max(MAX_RACERS),
+  paused: z.boolean(),
+  racers: z.array(label).max(MAX_PLAYERS),
+});
+
+const HudSchema: z.ZodType<Hud> = z.object({
+  place: z.number(), racers: z.number(), lap: z.number(), laps: z.number(), item: ItemIdSchema.nullable(), count: z.number(),
+  rolling: z.boolean(), finished: z.boolean(), time: timeOrNull, charge: z.number(), stage: z.enum(['countdown', 'go', 'done']),
+  stunned: z.boolean(), wrongWay: z.boolean(),
+  incoming: z.enum(GIANT_KINDS).nullable().optional(),
+  giant: z
+    .object({
+      charge: z.number(),
+      targets: z
+        .array(z.object({ k: z.number(), name: label, character: label, place: z.number(), cpu: z.boolean(), slot: z.number(), safe: z.boolean() }))
+        .max(MAX_RACERS),
+      endsIn: timeOrNull,
+    })
+    .nullable()
+    .optional(),
+});
+/** Dashboards by player id, one message for every phone. */
+export const HudsSchema = z.record(label, HudSchema).refine((h) => Object.keys(h).length <= MAX_PLAYERS, 'too many dashboards');
 
 // ---------------------------------------------------------------- handshakes and events
 

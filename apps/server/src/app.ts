@@ -1,6 +1,5 @@
 /** Wires the HTTP API, the socket handshake and the rooms into one server. */
 import { existsSync } from 'node:fs';
-import { readFile, rename, writeFile } from 'node:fs/promises';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,17 +15,21 @@ import { Admin, type Caller } from './admin';
 import type { Config } from './config';
 import { VERSION } from './config';
 import { Records } from './records';
-import { Room, type AppServer, type RoomSnapshot } from './room';
-import { clientAddress, inContainer, lanAddresses, Limiter, log, randomRoomCode, randomToken, sha256 } from './util';
+import { Room, RoomSnapshotSchema, type AppServer } from './room';
+import { clientAddress, inContainer, lanAddresses, Limiter, log, randomRoomCode, randomToken, readJsonFile, sha256, writeAtomic } from './util';
 
 const MAX_ROOMS = 300;
-const SWEEP_MS = 60_000;
+const SWEEP_MS = 30_000;
 const MINUTE_MS = 60_000;
+/** A room no TV ever opened: made and abandoned, or made only to take up space. */
+const NO_TV_MS = 2 * MINUTE_MS;
 
 export interface App {
   server: HttpServer;
   rooms: Map<string, Room>;
   admin: Admin;
+  /** Close the rooms that have expired. Runs by itself every half minute. */
+  sweep(): void;
   close(): Promise<void>;
 }
 
@@ -54,7 +57,8 @@ export async function createApp(config: Config): Promise<App> {
     // WebSocket only: polling would add latency and jitter to every steering input.
     transports: ['websocket'],
     serveClient: false,
-    maxHttpBufferSize: 64 * 1024,
+    // The largest real message, a full race's status or four giants' dashboards, is a few kilobytes.
+    maxHttpBufferSize: 16 * 1024,
     pingInterval: 10_000,
     pingTimeout: 8_000,
   });
@@ -67,14 +71,7 @@ export async function createApp(config: Config): Promise<App> {
   const saveRooms = () => {
     if (!roomsFile) return Promise.resolve();
     const body = JSON.stringify([...rooms.values()].map((r) => r.snapshot()));
-    saving = saving.then(async () => {
-      try {
-        await writeFile(`${roomsFile}.tmp`, body);
-        await rename(`${roomsFile}.tmp`, roomsFile);
-      } catch (err) {
-        log.error('could not save rooms', { err });
-      }
-    });
+    saving = saving.then(() => writeAtomic(roomsFile, body)).catch((err) => log.error('could not save rooms', { err }));
     return saving;
   };
   const roomsChanged = () => {
@@ -89,18 +86,11 @@ export async function createApp(config: Config): Promise<App> {
     rooms.set(room.code, room);
     roomsChanged();
   };
-  if (roomsFile) {
-    try {
-      const snaps = JSON.parse(await readFile(roomsFile, 'utf8')) as RoomSnapshot[];
-      for (const snap of snaps) {
-        if (Date.now() - snap.updatedAt > admin.settings.roomIdleMinutes * MINUTE_MS * 4) continue;
-        addRoom(Room.restore(io, snap, records, admin.settings.roomDefaults));
-      }
-      if (rooms.size) log.info('restored rooms', { count: rooms.size });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log.warn('could not restore rooms', { err: String(err) });
-    }
+  for (const snap of (roomsFile && (await readJsonFile(roomsFile, RoomSnapshotSchema.array()))) || []) {
+    if (Date.now() - snap.updatedAt > admin.settings.roomIdleMinutes * MINUTE_MS * 4) continue;
+    addRoom(Room.restore(io, snap, records, admin.settings.roomDefaults));
   }
+  if (rooms.size) log.info('restored rooms', { count: rooms.size });
 
   const http = express();
   http.disable('x-powered-by');
@@ -109,6 +99,9 @@ export async function createApp(config: Config): Promise<App> {
   http.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
+    // Never shown inside another site's frame, where a click could be steered onto a button of ours.
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    res.setHeader('X-Frame-Options', 'DENY');
     next();
   });
 
@@ -117,6 +110,8 @@ export async function createApp(config: Config): Promise<App> {
   const caller = (req: Request): Caller => ({ ip: address(req), agent: req.get('user-agent') ?? '' });
   const creating = new Limiter(0.2, 6);
   const joining = new Limiter(1, 12);
+  // Looking a code up says whether a room exists: enough for a phone opening a link, too slow to try them all.
+  const looking = new Limiter(1, 20);
   // Each guess costs a twentieth of a second of scrypt: a handful in a burst, then one every ten seconds.
   const guessing = new Limiter(0.1, 6);
 
@@ -140,6 +135,7 @@ export async function createApp(config: Config): Promise<App> {
   });
 
   http.get('/api/rooms/:code', (req, res) => {
+    if (!looking.allow(address(req))) return void res.status(429).json({ error: 'Too many tries. Wait a moment.' });
     const room = rooms.get(normalizeRoomCode(String(req.params.code)));
     if (!room) return void res.status(404).json({ error: 'No room with that code.' });
     res.json({ code: room.code, players: room.playerCount, tv: room.tvConnected });
@@ -300,31 +296,44 @@ export async function createApp(config: Config): Promise<App> {
   io.on('connection', (socket) => {
     const room = rooms.get(socket.data.code);
     if (!room) return void socket.disconnect(true);
-    // Each socket gets a message budget: phones send inputs about 30 times a second. The TV, which has proved
-    // it holds the room's key, sends dashboards and buzzes for four players and gets a much bigger one.
-    const budget = socket.data.role === 'tv' ? new Limiter(1000, 4000) : new Limiter(120, 240);
+    // Each socket gets a message budget: phones send inputs about 30 times a second. The TV sends everyone's
+    // dashboards in one message ten times a second, plus status and buzzes: a few dozen, with room to spare.
+    const budget = socket.data.role === 'tv' ? new Limiter(300, 600) : new Limiter(120, 240);
     socket.use((_packet, next) => (budget.allow('x') ? next() : undefined));
+    // Handlers run on their own tick, where a throw would take down the server and every room on it: log it instead.
+    const on = socket.on.bind(socket) as (event: string, fn: (...args: unknown[]) => void) => unknown;
+    (socket as unknown as { on: typeof on }).on = (event, fn) =>
+      on(event, (...args) => {
+        try {
+          fn(...args);
+        } catch (err) {
+          log.error('socket handler failed', { code: room.code, role: socket.data.role, event, err });
+        }
+      });
     if (socket.data.role === 'tv') room.attachTv(socket);
     else room.attachPlayer(socket, socket.data.playerId!);
   });
 
-  const sweeper = setInterval(() => {
+  const sweep = () => {
     const now = Date.now();
     for (const [code, room] of rooms) {
-      if (!room.tvConnected && now - Math.max(room.tvSeenAt, room.updatedAt) > admin.settings.roomIdleMinutes * MINUTE_MS) {
+      if (room.tvConnected) continue;
+      if (room.hadTv ? now - Math.max(room.tvSeenAt, room.updatedAt) > admin.settings.roomIdleMinutes * MINUTE_MS : now - room.createdAt > NO_TV_MS) {
         room.close('closed');
         rooms.delete(code);
         roomsChanged();
         log.info('room expired', { code });
       }
     }
-  }, SWEEP_MS);
+  };
+  const sweeper = setInterval(sweep, SWEEP_MS);
   sweeper.unref();
 
   return {
     server,
     rooms,
     admin,
+    sweep,
     async close() {
       clearInterval(sweeper);
       if (saveTimer) clearTimeout(saveTimer);

@@ -10,13 +10,13 @@
  * whoever finds it first.
  */
 import { randomInt } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ROOM_CODE_ALPHABET, ServerSettingsSchema,
   type AdminSessionView, type AuditAction, type AuditEntry, type ServerSettings,
 } from '@raceoff/shared';
-import { hashPassword, log, randomToken, safeEqual, sha256, verifyPassword } from './util';
+import { hashPassword, log, randomToken, safeEqual, sha256, verifyPassword, writeAtomic } from './util';
 
 const DAY_MS = 24 * 3_600_000;
 const MAX_AUDIT = 200;
@@ -56,12 +56,6 @@ async function readAdminFile(file: string): Promise<Partial<AdminFile> | null> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
-}
-
-/** Write to a temporary file and rename it over the old one, so a crash mid-write never leaves half a file. */
-async function writeAtomic(file: string, body: string) {
-  await writeFile(`${file}.tmp`, body, { mode: 0o600 });
-  await rename(`${file}.tmp`, file);
 }
 
 export class Admin {
@@ -115,7 +109,7 @@ export class Admin {
       settings: this.settings, passwordHash: this.passwordHash, sessions: [...this.sessions.values()], audit: this.audit,
     };
     const json = JSON.stringify(body, null, 2);
-    this.saving = this.saving.then(() => writeAtomic(file, json)).catch((err) => log.error('could not save admin settings', { err }));
+    this.saving = this.saving.then(() => writeAtomic(file, json, 0o600)).catch((err) => log.error('could not save admin settings', { err }));
     return this.saving;
   }
 
@@ -254,6 +248,6 @@ export async function resetAdminPassword(dir: string): Promise<boolean> {
   if (!saved) return false;
   const audit = Array.isArray(saved.audit) ? saved.audit : [];
   audit.push({ at: Date.now(), action: 'password.reset', ip: 'server', detail: {} });
-  await writeAtomic(file, JSON.stringify({ ...saved, passwordHash: null, sessions: [], audit: audit.slice(-MAX_AUDIT) }, null, 2));
+  await writeAtomic(file, JSON.stringify({ ...saved, passwordHash: null, sessions: [], audit: audit.slice(-MAX_AUDIT) }, null, 2), 0o600);
   return true;
 }

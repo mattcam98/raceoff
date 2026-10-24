@@ -1,7 +1,9 @@
 import { createHash, randomBytes, randomInt, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '@raceoff/shared';
+import type { z } from 'zod';
 
 // ---------------------------------------------------------------- logging
 
@@ -128,4 +130,38 @@ export function lanAddresses(): string[] {
   // Home networks first: 192.168 then 10 then 172.
   const rank = (ip: string) => (ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : ip.startsWith('172.') ? 2 : 3);
   return out.sort((a, b) => rank(a) - rank(b));
+}
+
+// ---------------------------------------------------------------- saved files
+
+/** Write to a temporary file and rename it over the old one, so a crash mid-write never leaves half a file. */
+export async function writeAtomic(file: string, body: string, mode = 0o666) {
+  await writeFile(`${file}.tmp`, body, { mode });
+  await rename(`${file}.tmp`, file);
+}
+
+/**
+ * Read a saved JSON file, or null when there is none. One that cannot be read or is not the shape expected is
+ * moved aside to `<file>.bad-<time>` and null comes back: the server starts afresh, and the next save does not
+ * overwrite what someone may want to look at or mend.
+ */
+export async function readJsonFile<T extends z.ZodType>(file: string, schema: T): Promise<z.output<T> | null> {
+  let problem: string;
+  try {
+    const parsed = schema.safeParse(JSON.parse(await readFile(file, 'utf8')));
+    if (parsed.success) return parsed.data;
+    const issue = parsed.error.issues[0];
+    problem = `${issue?.path.join('.')}: ${issue?.message}`;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    problem = String(err);
+  }
+  const aside = `${file}.bad-${Date.now()}`;
+  try {
+    await rename(file, aside);
+    log.warn('a saved file could not be read: moved it aside and starting afresh', { file, aside, problem });
+  } catch (err) {
+    log.error('a saved file could not be read, nor moved aside', { file, problem, err });
+  }
+  return null;
 }
